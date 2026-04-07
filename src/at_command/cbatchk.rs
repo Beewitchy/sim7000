@@ -14,7 +14,6 @@ impl AtRequest for EnableVBatCheck {
             "AT+CBATCHK=1\r"
         } else {
             "AT+CBATCHK=0\r"
-        }
-        .into()
+        }.try_into().unwrap_or_default()
     }
 }

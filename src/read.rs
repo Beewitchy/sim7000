@@ -39,7 +39,7 @@ impl<'context> ModemReader<'context> {
                 self.buffer
                     .truncate(self.buffer.len() - MODEM_INPUT_PROMPT.len());
 
-                return Ok(MODEM_INPUT_PROMPT.into());
+                return Ok(MODEM_INPUT_PROMPT.try_into().unwrap_or_default());
             } else if let Some(position) = self
                 .buffer
                 .windows(LINE_END.len())
@@ -64,7 +64,7 @@ impl<'context> ModemReader<'context> {
                 }
 
                 let line = line.trim(); // The modem likes to be inconsistent with white space
-                let line = heapless::String::from(line);
+                let line = heapless::String::try_from(line).map_err(|_| Error::InvalidUtf8)?;
 
                 // Remove the line from the buffer
                 self.buffer.rotate_left(line_end);

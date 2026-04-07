@@ -25,7 +25,7 @@ pub struct GetSmsMessageFormat;
 impl AtRequest for GetSmsMessageFormat {
     type Response = (SmsMessageFormat, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CMGF?\r".into()
+        "AT+CMGF?\r".try_into().unwrap_or_default()
     }
 }
 

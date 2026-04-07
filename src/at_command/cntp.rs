@@ -34,7 +34,7 @@ impl AtRequest for SynchronizeNetworkTime {
 impl AtRequest for Execute {
     type Response = (GenericOk, NetworkTime);
     fn encode(&self) -> String<256> {
-        "AT+CNTP\r".into()
+        "AT+CNTP\r".try_into().unwrap_or_default()
     }
 }
 
@@ -61,7 +61,7 @@ impl AtParseLine for NetworkTime {
         let line = line.strip_prefix("+CNTP: ").ok_or("Missing '+CNTP: '")?;
 
         let (code, time) = match line.split_once(',') {
-            Some((code, time)) => (code, Some(time.into())),
+            Some((code, time)) => (code, Some(time.try_into().unwrap_or_default())),
             None => (line, None),
         };
 

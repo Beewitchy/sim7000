@@ -122,7 +122,7 @@ impl<'context> Pump for RxPump<'context> {
                     log::warn!("received empty line from modem");
                 }
 
-                sms.message = line[..line.len()].into();
+                sms.message = line[..line.len()].try_into().unwrap_or_default();
             }
 
             log::debug!("Got generic response: {:?}", line.as_str());

@@ -25,6 +25,14 @@ pub enum Xtra {
     NotEffective,
 }
 
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SIM7000 error {self:?}")
+    }
+}
+
+impl core::error::Error for Error {}
+
 impl embedded_io_async::Error for Error {
     fn kind(&self) -> embedded_io_async::ErrorKind {
         match self {

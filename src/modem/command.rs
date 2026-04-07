@@ -29,7 +29,7 @@ impl From<String<256>> for RawAtCommand {
 
 impl From<&'_ str> for RawAtCommand {
     fn from(s: &'_ str) -> Self {
-        RawAtCommand::Text(s.into())
+        RawAtCommand::Text(s.try_into().unwrap_or_default())
     }
 }
 

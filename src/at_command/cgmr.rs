@@ -22,7 +22,7 @@ impl AtRequest for GetFwVersion {
     type Response = (FwVersion, GenericOk);
 
     fn encode(&self) -> String<256> {
-        "AT+CGMR\r".into()
+        "AT+CGMR\r".try_into().unwrap_or_default()
     }
 }
 

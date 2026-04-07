@@ -10,7 +10,7 @@ pub struct GetImei;
 impl AtRequest for GetImei {
     type Response = (Imei, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+GSN\r".into()
+        "AT+GSN\r".try_into().unwrap_or_default()
     }
 }
 
@@ -40,7 +40,7 @@ impl AtParseLine for Imei {
             return Err("Imei number has invalid check digit".into());
         }
 
-        Ok(Imei { imei: line.into() })
+        Ok(Imei { imei: line.try_into().unwrap_or_default() })
     }
 }
 

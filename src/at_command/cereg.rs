@@ -41,6 +41,6 @@ impl AtRequest for GetRegistrationStatus {
     type Response = GenericOk;
 
     fn encode(&self) -> String<256> {
-        "AT+CEREG?\r".into()
+        "AT+CEREG?\r".try_into().unwrap_or_default()
     }
 }

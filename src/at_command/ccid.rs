@@ -10,7 +10,7 @@ pub struct ShowIccid;
 impl AtRequest for ShowIccid {
     type Response = (Iccid, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CCID\r".into()
+        "AT+CCID\r".try_into().unwrap_or_default()
     }
 }
 

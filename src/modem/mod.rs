@@ -372,8 +372,8 @@ impl<'c, P: ModemPower> Modem<'c, P> {
         commands
             .run(cstt::StartTask {
                 apn: apn.clone(),
-                username: self.ap_username.into(),
-                password: self.ap_password.into(),
+                username: self.ap_username.try_into().unwrap_or_default(),
+                password: self.ap_password.try_into().unwrap_or_default(),
             })
             .await?;
 
@@ -509,10 +509,10 @@ impl<'c, P: ModemPower> Modem<'c, P> {
         let commands = self.commands.lock().await;
         commands
             .run(cmgs::SendSms {
-                destination: destination.into(),
+                destination: destination.try_into().unwrap_or_default(),
             })
             .await?;
-        commands.run(SendSmsMessage(message.into())).await?;
+        commands.run(SendSmsMessage(message.try_into().unwrap_or_default())).await?;
         Ok(())
     }
 
@@ -613,7 +613,7 @@ impl<'c, P: ModemPower> Modem<'c, P> {
             .await?;
         commands
             .run(crate::at_command::cntp::SynchronizeNetworkTime {
-                ntp_server: ntp_server.into(),
+                ntp_server: ntp_server.try_into().unwrap_or_default(),
                 timezone,
                 cid: 1,
             })
@@ -644,8 +644,8 @@ impl<'c, P: ModemPower> Modem<'c, P> {
                     // unclear which xtra file to use, the size differs depending on server
                     // so they might contain more/different data or different satellite networks
                     // also, sometimes the server is scuffed
-                    url: url.into(),
-                    file_path: "/customer/xtra3grc.bin".into(),
+                    url: url.try_into().unwrap_or_default(),
+                    file_path: "/customer/xtra3grc.bin".try_into().unwrap_or_default(),
                 })
                 .await?
                 .1
@@ -826,11 +826,11 @@ impl SmsStream<'_> {
             .run_with_timeout(
                 Some(Duration::from_secs(10)),
                 cmgs::SendSms {
-                    destination: destination.into(),
+                    destination: destination.try_into().unwrap_or_default(),
                 },
             )
             .await?;
-        commands.run(SendSmsMessage(message.into())).await?;
+        commands.run(SendSmsMessage(message.try_into().unwrap_or_default())).await?;
         Ok(())
     }
 }

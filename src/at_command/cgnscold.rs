@@ -30,7 +30,7 @@ impl XtraStatus {
 impl AtRequest for GnssColdStart {
     type Response = (GenericOk, XtraStatus);
     fn encode(&self) -> String<256> {
-        "AT+CGNSCOLD\r".into()
+        "AT+CGNSCOLD\r".try_into().unwrap_or_default()
     }
 }
 

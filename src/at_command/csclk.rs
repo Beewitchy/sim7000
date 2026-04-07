@@ -15,6 +15,6 @@ impl AtRequest for SetSlowClock {
         } else {
             "AT+CSCLK=0\r"
         }
-        .into()
+        .try_into().unwrap_or_default()
     }
 }

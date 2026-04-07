@@ -89,7 +89,7 @@ impl TcpContext {
         TcpContext { slots }
     }
 
-    pub fn claim(&self) -> Option<TcpToken> {
+    pub fn claim(&self) -> Option<TcpToken<'_>> {
         self.slots.iter().enumerate().find_map(|(i, slot)| {
             let TcpSlot { rx, events } = slot.claim()?; // find an unclaimed slot
             Some(TcpToken {

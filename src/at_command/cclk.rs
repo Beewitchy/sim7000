@@ -10,7 +10,7 @@ pub struct GetTime;
 impl AtRequest for GetTime {
     type Response = (CclkTime, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CCLK?\r".into()
+        "AT+CCLK?\r".try_into().unwrap_or_default()
     }
 }
 
@@ -24,7 +24,7 @@ impl AtParseLine for CclkTime {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
         let line = line.strip_prefix("+CCLK: ").ok_or("Missing '+CCLK: '")?;
 
-        Ok(CclkTime { time: line.into() })
+        Ok(CclkTime { time: line.try_into().unwrap_or_default() })
     }
 }
 

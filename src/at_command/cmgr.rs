@@ -38,8 +38,8 @@ impl AtParseLine for SmsMessage {
         let (sender, _) = rest.split_once(',').ok_or("Missing ','")?;
 
         Ok(Self {
-            sender: sender.trim_matches('\"').into(),
-            message: "".into(),
+            sender: sender.trim_matches('\"').try_into().unwrap_or_default(),
+            message: "".try_into().unwrap_or_default(),
         })
     }
 }

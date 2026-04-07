@@ -23,7 +23,7 @@ pub struct NetworkApn {
 impl AtRequest for GetNetworkApn {
     type Response = (NetworkApn, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CGNAPN\r".into()
+        "AT+CGNAPN\r".try_into().unwrap_or_default()
     }
 }
 

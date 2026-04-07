@@ -15,6 +15,6 @@ impl AtRequest for EnableMultiIpConnection {
         } else {
             "AT+CIPMUX=0\r"
         }
-        .into()
+        .try_into().unwrap_or_default()
     }
 }

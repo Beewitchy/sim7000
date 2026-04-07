@@ -43,6 +43,6 @@ impl AtRequest for SetGnssWorkModeSet {
 impl AtRequest for GetGnssWorkModeSet {
     type Response = GenericOk;
     fn encode(&self) -> String<256> {
-        "AT+CGNSMOD?\r".into()
+        "AT+CGNSMOD?\r".try_into().unwrap_or_default()
     }
 }

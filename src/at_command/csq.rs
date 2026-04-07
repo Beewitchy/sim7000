@@ -10,7 +10,7 @@ pub struct GetSignalQuality;
 impl AtRequest for GetSignalQuality {
     type Response = (SignalQuality, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CSQ\r".into()
+        "AT+CSQ\r".try_into().unwrap_or_default()
     }
 }
 

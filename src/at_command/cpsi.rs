@@ -12,7 +12,7 @@ pub struct GetSystemInfo;
 impl AtRequest for GetSystemInfo {
     type Response = (SystemInfo, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CPSI?\r".into()
+        "AT+CPSI?\r".try_into().unwrap_or_default()
     }
 }
 

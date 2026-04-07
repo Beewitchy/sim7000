@@ -12,7 +12,7 @@ pub struct GetLocalIpExt;
 impl AtRequest for GetLocalIpExt {
     type Response = (IpExt, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CIFSREX\r".into()
+        "AT+CIFSREX\r".try_into().unwrap_or_default()
     }
 }
 

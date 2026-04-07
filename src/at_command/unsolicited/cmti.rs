@@ -20,7 +20,7 @@ impl AtParseLine for NewSmsIndex {
         let (memory, index) = rest.split_once(',').ok_or("Missing ','")?;
 
         Ok(Self {
-            memory: memory.trim_matches('\"').into(),
+            memory: memory.trim_matches('\"').try_into().unwrap_or_default(),
             index: index.parse()?,
         })
     }

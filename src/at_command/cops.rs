@@ -39,7 +39,7 @@ pub enum OperatorFormat {
 impl AtRequest for GetOperatorInfo {
     type Response = (OperatorInfo, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+COPS?\r".into()
+        "AT+COPS?\r".try_into().unwrap_or_default()
     }
 }
 
@@ -67,7 +67,7 @@ impl AtParseLine for OperatorInfo {
             _ => return Err("Failed to parse format".into()),
         };
 
-        let operator_name = operator_name.trim_matches('"').into();
+        let operator_name = operator_name.trim_matches('"').try_into().unwrap_or_default();
 
         Ok(OperatorInfo {
             mode,

@@ -12,7 +12,7 @@ pub struct CopyXtraFile;
 impl AtRequest for CopyXtraFile {
     type Response = (CopyResponse, GenericOk);
     fn encode(&self) -> String<256> {
-        "AT+CGNSCPY\r".into()
+        "AT+CGNSCPY\r".try_into().unwrap_or_default()
     }
 }
 

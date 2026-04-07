@@ -30,6 +30,15 @@ pub enum TcpError {
     Closed,
 }
 
+
+impl core::fmt::Display for TcpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SIM7000 tcp error {self:?}")
+    }
+}
+
+impl core::error::Error for TcpError {}
+
 impl embedded_io_async::Error for TcpError {
     fn kind(&self) -> embedded_io_async::ErrorKind {
         match self {
@@ -207,6 +216,11 @@ impl Write for TcpStream<'_> {
         let (_, mut writer) = self.split();
         writer.write(buf).await
     }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        let (_, mut writer) = self.split();
+        writer.flush().await
+    }
 }
 
 impl Read for TcpStream<'_> {
@@ -269,6 +283,10 @@ impl Write for TcpWriter<'_> {
         }
 
         Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 

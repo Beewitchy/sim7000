@@ -148,6 +148,7 @@ mod test {
             sat_gnss_used: 6,
             sat_glonass_used: 0,
             signal_noise_ratio: 45,
+            date_time: DateTime { year: 2017, month: 11, day: 03, hour: 02, minute: 26, second: 32 }
         });
 
         assert_eq!(expected, gnss);
@@ -172,6 +173,7 @@ mod test {
             sat_gnss_used: 5,
             sat_glonass_used: 0,
             signal_noise_ratio: 52,
+            date_time: DateTime { year: 2022, month: 01, day: 26, hour: 14, minute: 09, second: 44 }
         });
 
         assert_eq!(expected, gnss);
