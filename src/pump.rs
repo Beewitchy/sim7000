@@ -221,7 +221,7 @@ pub struct RawIoPump<'context, RW> {
     pub(crate) power_state: PowerState,
 }
 
-impl<'context, RW: 'static + BuildIo> RawIoPump<'context, RW> {
+impl<'context, RW: 'context + BuildIo> RawIoPump<'context, RW> {
     pub async fn high_power_pump(&mut self) -> Result<(), Error> {
         let mut io = Some(self.io.build());
         let (mut reader, mut writer) = RW::IO::split(&mut io);
@@ -271,7 +271,7 @@ impl<'context, RW: 'static + BuildIo> RawIoPump<'context, RW> {
     }
 }
 
-impl<'context, RW: 'static + BuildIo> Pump for RawIoPump<'context, RW> {
+impl<'context, RW: 'context + BuildIo> Pump for RawIoPump<'context, RW> {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
