@@ -5,7 +5,7 @@ use crate::{
 use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
+    blocking_mutex::raw::RawMutex,
     channel::{Receiver, Sender},
     pipe::Pipe,
     signal::Signal,
@@ -34,18 +34,18 @@ pub trait Pump {
     fn pump(&mut self) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
-pub struct RxPump<'context> {
+pub struct RxPump<'context, M: RawMutex + 'static> {
     pub(crate) reader: ModemReader<'context>,
-    pub(crate) generic_response: Sender<'context, CriticalSectionRawMutex, ResponseCode, 1>,
-    pub(crate) tcp: &'context TcpContext,
-    pub(crate) gnss: &'context Signal<CriticalSectionRawMutex, GnssReport>,
-    pub(crate) voltage_warning: &'context Signal<CriticalSectionRawMutex, VoltageWarning>,
+    pub(crate) generic_response: Sender<'context, M, ResponseCode, 1>,
+    pub(crate) tcp: &'context TcpContext<M>,
+    pub(crate) gnss: &'context Signal<M, GnssReport>,
+    pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
     pub(crate) registration_events:
-        &'context StateSignal<CriticalSectionRawMutex, NetworkRegistration>,
-    pub(crate) sms_indices: Sender<'context, CriticalSectionRawMutex, NewSmsIndex, 5>,
+        &'context StateSignal<M, NetworkRegistration>,
+    pub(crate) sms_indices: Sender<'context, M, NewSmsIndex, 5>,
 }
 
-impl<'context> Pump for RxPump<'context> {
+impl<'context, M> Pump for RxPump<'context, M> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -145,19 +145,23 @@ impl<'context> Pump for RxPump<'context> {
     }
 }
 
-pub struct TxPump<'context> {
-    pub(crate) writer: &'context Pipe<CriticalSectionRawMutex, 2048>,
-    pub(crate) commands: Receiver<'context, CriticalSectionRawMutex, RawAtCommand, 4>,
+pub struct TxPump<'context, M: RawMutex> {
+    pub(crate) writer: &'context Pipe<M, 2048>,
+    pub(crate) commands: Receiver<'context, M, RawAtCommand, 4>,
 }
 
-impl<'context> Pump for TxPump<'context> {
+impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
         let command = self.commands.receive().await;
+        #[cfg(feature = "defmt")]
         match &command {
-            RawAtCommand(text) => log::trace!("Write to modem: {:?}", text.as_str()),
+            RawAtCommand { bytes, binary: false } => log::trace!("Write to modem: {=[u8]:str}", bytes.as_slice()),
+            RawAtCommand { bytes, binary: true } => log::trace!("Write to modem: {=[u8]}", bytes.as_slice()),
         }
+        #[cfg(not(feature = "defmt"))]
+        log::trace!("Write to modem: {:?}", command.as_bytes());
 
         // `Writer` is infallible. It is fine to ignore these errors.
         let _ = self.writer.write_all(command.as_bytes()).await;
@@ -167,13 +171,13 @@ impl<'context> Pump for TxPump<'context> {
     }
 }
 
-pub struct DropPump<'context> {
-    pub(crate) context: &'context ModemContext,
+pub struct DropPump<'context, M: RawMutex + 'static> {
+    pub(crate) context: &'context ModemContext<M>,
     pub(crate) power_signal: PowerSignalListener<'context>,
     pub(crate) power_state: PowerState,
 }
 
-impl<'context> Pump for DropPump<'context> {
+impl<'context, M> Pump for DropPump<'context, M> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -210,12 +214,12 @@ impl<'context> Pump for DropPump<'context> {
     }
 }
 
-pub struct RawIoPump<'context, RW> {
+pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) io: RW,
     /// sends data to the rx pump
-    pub(crate) rx: &'context Pipe<CriticalSectionRawMutex, 2048>,
+    pub(crate) rx: &'context Pipe<M, 2048>,
     /// reads data from the tx pump
-    pub(crate) tx: &'context Pipe<CriticalSectionRawMutex, 2048>,
+    pub(crate) tx: &'context Pipe<M, 2048>,
     pub(crate) power_signal: PowerSignalListener<'context>,
     pub(crate) power_state: PowerState,
 }

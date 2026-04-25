@@ -32,7 +32,7 @@ impl AtResponse for CclkTime {
     fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::CclkTime(time) => Ok(time),
-            _ => Err(()),
+            _ => Err(code),
         }
     }
 }

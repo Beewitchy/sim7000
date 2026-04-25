@@ -3,6 +3,7 @@
 #![allow(clippy::single_component_path_imports)]
 // large enum variants are unavoidable in no_std, since we can't box things
 #![allow(clippy::large_enum_variant, clippy::result_large_err)]
+#![feature(once_cell_get_mut)]
 
 // TODO: at_command should probably be moved to its own crate
 pub mod at_command;
@@ -138,12 +139,6 @@ macro_rules! spawn_modem {
             #[allow(clippy::declare_interior_mutable_const)]
             const NEW_SLOT: Slot<TcpSlot> = Slot::new(TcpSlot::new());
             [NEW_SLOT; __TCP_SLOT_COUNT]
-        };
-
-        static SIM7000_REQUEST_BUFFER: [Option<::sim7000_async::modem::command::RawAtCommand>; 4] = {
-            #[allow(clippy::declare_interior_mutable_const)]
-            const REQUEST: Option<::sim7000_async::modem::command::RawAtCommand> = None;
-            [REQUEST; 4]
         };
 
         static SIM7000_CONTEXT: ::sim7000_async::modem::ModemContext =

@@ -3,8 +3,10 @@ mod context;
 pub mod power;
 
 use crate::{
+    BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        ate, cbatchk, ccid,
+        At, AtRequest, BearerSettings, CharacterSet, NetworkMode, SelectMessageService,
+        SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate, cbatchk, ccid,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
@@ -23,8 +25,6 @@ use crate::{
         ifc::{self, FlowControl},
         ipr::{self, BaudRate},
         unsolicited::{NetworkRegistration, NewSmsIndex, RegistrationStatus},
-        At, AtRequest, BearerSettings, CharacterSet, NetworkMode, SelectMessageService,
-        SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat,
     },
     gnss::Gnss,
     log,
@@ -32,15 +32,12 @@ use crate::{
     read::ModemReader,
     tcp::{ConnectError, TcpStream},
     voltage::VoltageWarner,
-    BuildIo, Error, ModemPower, PowerState,
 };
-pub use command::{CommandRunner, CommandRunnerGuard, RawAtCommand, AT_DEFAULT_TIMEOUT};
+pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, CommandRunnerGuard, RawAtCommand};
 pub use context::*;
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Receiver, signal::Signal,
-};
-use embassy_time::{with_timeout, Duration, Timer};
-use futures::{select_biased, FutureExt};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Receiver, signal::Signal};
+use embassy_time::{Duration, Timer, with_timeout};
+use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
 
 use self::{command::ExpectResponse, power::PowerSignalBroadcaster};
@@ -50,7 +47,7 @@ pub struct Disabled;
 pub struct Enabled;
 pub struct Sleeping;
 
-pub struct Modem<'c, P, M: RawMutex> {
+pub struct Modem<'c, P, M: RawMutex + 'static> {
     context: &'c ModemContext<M>,
     power_signal: PowerSignalBroadcaster<'c>,
     commands: CommandRunner<'c, M>,
@@ -100,21 +97,36 @@ macro_rules! try_retry {
     }};
 }
 
-impl<'c, P: ModemPower> Modem<'c, P> {
+impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     pub async fn new<I: BuildIo>(
         io: I,
         power: P,
-        context: &'c ModemContext,
+        context: &'c ModemContext<M>,
     ) -> Result<
         (
-            Modem<'c, P>,
-            RawIoPump<'c, I>,
-            TxPump<'c>,
-            RxPump<'c>,
-            DropPump<'c>,
+            Modem<'c, P, M>,
+            RawIoPump<'c, I, M>,
+            TxPump<'c, M>,
+            RxPump<'c, M>,
+            DropPump<'c, M>,
         ),
         Error,
     > {
+        let (command_sender, command_receiver) = context
+            .commands
+            .get_mut_or_init(|| {
+                Channel::new(&mut [
+                    RawAtCommand::new(),
+                    RawAtCommand::new(),
+                    RawAtCommand::new(),
+                    RawAtCommand::new(),
+                ])
+            })
+            .split();
+        let (response_sender, respose_receiver) = ctx
+            .generic_response
+            .get_mut_or_init(|| Channel::new(&mut [None]))
+            .split();
         let modem = Modem {
             commands: context.commands(),
             power_signal: context.power_signal.publisher(),
@@ -492,7 +504,7 @@ impl<'c, P: ModemPower> Modem<'c, P> {
         }
     }
 
-    pub async fn get_sms_stream(&mut self) -> (SmsStream<'c>, SmsSignal<'c>) {
+    pub async fn get_sms_stream(&mut self) -> (SmsStream<'c, M>, SmsSignal<'c, M>) {
         let sms_indicies = self.context.sms_indices.receiver();
         (
             SmsStream {
@@ -512,7 +524,9 @@ impl<'c, P: ModemPower> Modem<'c, P> {
                 destination: destination.try_into().unwrap_or_default(),
             })
             .await?;
-        commands.run(SendSmsMessage(message.try_into().unwrap_or_default())).await?;
+        commands
+            .run(SendSmsMessage(message.try_into().unwrap_or_default()))
+            .await?;
         Ok(())
     }
 
@@ -830,7 +844,9 @@ impl<M> SmsStream<'_, M> {
                 },
             )
             .await?;
-        commands.run(SendSmsMessage(message.try_into().unwrap_or_default())).await?;
+        commands
+            .run(SendSmsMessage(message.try_into().unwrap_or_default()))
+            .await?;
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 use super::{AtParseErr, AtParseLine, AtResponse, ResponseCode};
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GenericOk;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SimError {
     /// Generic error
@@ -21,7 +21,7 @@ pub enum SimError {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WritePrompt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CloseOk {
     pub connection: usize,

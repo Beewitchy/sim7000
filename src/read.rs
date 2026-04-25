@@ -1,17 +1,17 @@
 use core::str::from_utf8;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pipe::Pipe};
+use embassy_sync::{blocking_mutex::raw::RawMutex, pipe::Pipe};
 use embedded_io_async::Read;
 use heapless::{String, Vec};
 
 use crate::{log, Error};
 
-pub struct ModemReader<'context> {
-    read: &'context Pipe<CriticalSectionRawMutex, 2048>,
+pub struct ModemReader<'context, M: RawMutex> {
+    read: &'context Pipe<M, 2048>,
     buffer: Vec<u8, 256>,
 }
 
-impl<'context> ModemReader<'context> {
-    pub fn new(read: &'context Pipe<CriticalSectionRawMutex, 2048>) -> ModemReader<'context> {
+impl<'context, M> ModemReader<'context, M> where M: RawMutex {
+    pub fn new(read: &'context Pipe<M, 2048>) -> ModemReader<'context, M> {
         ModemReader {
             read,
             buffer: Vec::new(),

@@ -43,7 +43,6 @@ pub struct ModemContext<M: RawMutex + 'static> {
 
 impl<M> ModemContext<M> where M: RawMutex {
     pub const fn new(tcp: TcpContext<M>) -> Self {
-        static COMMAND_BUFFER: [Option<RawAtCommand>; 4] = [None, None, None, None];
         ModemContext {
             power_signal: PowerSignal::new(),
             command_lock: Mutex::new(()),
@@ -65,7 +64,7 @@ impl<M> ModemContext<M> where M: RawMutex {
         }
     }
 
-    pub fn commands(&self) -> CommandRunner<'_, M> {
+    pub fn commands(&mut self) -> CommandRunner<'_, M> {
         CommandRunner::create(self)
     }
 }

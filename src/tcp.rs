@@ -1,6 +1,6 @@
 use cipstart::ConnectMode;
 use core::sync::atomic::{AtomicBool, Ordering};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel};
+use embassy_sync::{blocking_mutex::raw::RawMutex, pubsub::PubSubChannel};
 use embassy_time::{with_timeout, Duration, TimeoutError, Timer};
 use embedded_io_async::{
     ErrorType, {Read, Write},
@@ -11,7 +11,7 @@ use crate::{
     at_command::{at, cipsend, cipstart, unsolicited::ConnectionMessage, At},
     drop::{AsyncDrop, DropChannel, DropMessage},
     log,
-    modem::{CommandRunner, TcpToken},
+    modem::{CommandRunner, TcpToken, Modem},
     util::Lagged,
     Error,
 };
@@ -112,13 +112,13 @@ impl Drop for TcpStream<'_> {
     }
 }
 
-impl<'s> TcpStream<'s> {
+impl<'s, M> TcpStream<'s, M> where M: RawMutex {
     pub(crate) async fn connect(
-        token: TcpToken<'s>,
+        token: TcpToken<'s, M>,
         host: &str,
         port: u16,
-        drop_channel: &'s DropChannel,
-        commands: CommandRunner<'s>,
+        drop_channel: &'s DropChannel<M>,
+        commands: Modem<'s, M>,
     ) -> Result<TcpStream<'s>, ConnectError> {
         // create a drop guard here, so that if this function errors,
         // we make sure to clean up the connection
