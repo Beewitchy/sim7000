@@ -12,10 +12,8 @@ pub struct ReadSms {
 
 impl AtRequest for ReadSms {
     type Response = (SmsMessage, GenericOk);
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CMGR={}\r", self.index).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CMGR={}\r", self.index)
     }
 }
 
@@ -59,7 +57,7 @@ impl AtParseLine for SmsMessage {
 // }
 
 impl AtResponse for SmsMessage {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::SmsMessage(sms) => Ok(sms),
             _ => Err(code),
@@ -67,7 +65,7 @@ impl AtResponse for SmsMessage {
     }
 }
 // impl AtResponse for SmsInfo {
-//     fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+//     fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
 //         match code {
 //             ResponseCode::SmsInfo(sms) => Ok(sms),
 //             _ => Err(code),

@@ -11,8 +11,8 @@ pub struct GetLocalIpExt;
 
 impl AtRequest for GetLocalIpExt {
     type Response = (IpExt, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CIFSREX\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CIFSREX\r")
     }
 }
 
@@ -35,7 +35,7 @@ impl AtParseLine for IpExt {
 }
 
 impl AtResponse for IpExt {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::IpExt(ip_ext) => Ok(ip_ext),
             _ => Err(code),

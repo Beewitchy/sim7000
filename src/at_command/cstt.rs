@@ -15,14 +15,11 @@ pub struct StartTask {
 
 impl AtRequest for StartTask {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+CSTT={:?},{:?},{:?}\r",
             self.apn, self.username, self.password,
         )
-        .unwrap();
-        buf
     }
 }

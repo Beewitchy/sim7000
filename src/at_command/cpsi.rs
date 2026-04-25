@@ -11,8 +11,8 @@ pub struct GetSystemInfo;
 
 impl AtRequest for GetSystemInfo {
     type Response = (SystemInfo, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CPSI?\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CPSI?\r")
     }
 }
 
@@ -73,7 +73,7 @@ impl AtParseLine for SystemInfo {
 }
 
 impl AtResponse for SystemInfo {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::SystemInfo(v) => Ok(v),
             _ => Err(code),

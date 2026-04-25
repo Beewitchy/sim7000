@@ -9,11 +9,11 @@ pub struct EnableVBatCheck(pub bool);
 
 impl AtRequest for EnableVBatCheck {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if self.0 {
-            "AT+CBATCHK=1\r"
+            write!(buf, "AT+CBATCHK=1\r")
         } else {
-            "AT+CBATCHK=0\r"
-        }.try_into().unwrap_or_default()
+            write!(buf, "AT+CBATCHK=0\r")
+        }
     }
 }

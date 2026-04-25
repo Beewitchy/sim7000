@@ -33,13 +33,11 @@ impl DeleteFlag {
 
 impl AtRequest for DeleteSms {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if let DeleteFlag::Index(index) = self.0 {
-            write!(buf, "AT+CMGD={}\r", index).unwrap();
+            write!(buf, "AT+CMGD={}\r", index)
         } else {
-            write!(buf, "AT+CMGD=0,{}\r", self.0.as_u8()).unwrap();
+            write!(buf, "AT+CMGD=0,{}\r", self.0.as_u8())
         }
-        buf
     }
 }

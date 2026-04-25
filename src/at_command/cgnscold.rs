@@ -29,8 +29,8 @@ impl XtraStatus {
 
 impl AtRequest for GnssColdStart {
     type Response = (GenericOk, XtraStatus);
-    fn encode(&self) -> String<256> {
-        "AT+CGNSCOLD\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSCOLD\r")
     }
 }
 
@@ -50,7 +50,7 @@ impl AtParseLine for XtraStatus {
 }
 
 impl AtResponse for XtraStatus {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::XtraStatus(v) => Ok(v),
             _ => Err(code),

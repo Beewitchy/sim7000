@@ -140,6 +140,12 @@ macro_rules! spawn_modem {
             [NEW_SLOT; __TCP_SLOT_COUNT]
         };
 
+        static SIM7000_REQUEST_BUFFER: [Option<::sim7000_async::modem::command::RawAtCommand>; 4] = {
+            #[allow(clippy::declare_interior_mutable_const)]
+            const REQUEST: Option<::sim7000_async::modem::command::RawAtCommand> = None;
+            [REQUEST; 4]
+        };
+
         static SIM7000_CONTEXT: ::sim7000_async::modem::ModemContext =
             ::sim7000_async::modem::ModemContext::new(::sim7000_async::modem::TcpContext::new(&SIM7000_TCP_SLOTS));
 

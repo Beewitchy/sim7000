@@ -29,10 +29,8 @@ pub struct GetRegistrationStatus;
 
 impl AtRequest for ConfigureRegistrationUrc {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CGREG={}\r", *self as u8).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGREG={}\r", *self as u8)
     }
 }
 
@@ -40,7 +38,7 @@ impl AtRequest for GetRegistrationStatus {
     // The actual response is generated as an URC
     type Response = GenericOk;
 
-    fn encode(&self) -> String<256> {
-        "AT+CGREG?\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGREG?\r")
     }
 }

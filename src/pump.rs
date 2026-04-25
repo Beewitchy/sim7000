@@ -156,8 +156,7 @@ impl<'context> Pump for TxPump<'context> {
     async fn pump(&mut self) -> Result<(), Self::Err> {
         let command = self.commands.receive().await;
         match &command {
-            RawAtCommand::Text(text) => log::debug!("Write to modem: {:?}", text.as_str()),
-            RawAtCommand::Binary(bytes) => log::debug!("Write {} bytes to modem", bytes.len()),
+            RawAtCommand(text) => log::trace!("Write to modem: {:?}", text.as_str()),
         }
 
         // `Writer` is infallible. It is fine to ignore these errors.

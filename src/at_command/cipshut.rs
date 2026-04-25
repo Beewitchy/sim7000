@@ -9,7 +9,7 @@ pub struct ShutConnections;
 
 impl AtRequest for ShutConnections {
     type Response = GenericOk; // TODO: should have its own type
-    fn encode(&self) -> String<256> {
-        "AT+CIPSHUT\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CIPSHUT\r")
     }
 }

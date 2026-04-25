@@ -54,14 +54,11 @@ pub enum EdrxCycleLength {
 
 impl AtRequest for ConfigureEDRX {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+CEDRXS={},{},\"{:04b}\"\r",
             self.n as u8, self.act_type as u8, self.requested_edrx_value as u8,
         )
-        .unwrap();
-        buf
     }
 }

@@ -13,9 +13,7 @@ pub struct IpSend {
 
 impl AtRequest for IpSend {
     type Response = WritePrompt;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CIPSEND={},{}\r", self.connection, self.data_length).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CIPSEND={},{}\r", self.connection, self.data_length)
     }
 }

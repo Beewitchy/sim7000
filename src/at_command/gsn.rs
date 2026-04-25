@@ -9,8 +9,8 @@ pub struct GetImei;
 
 impl AtRequest for GetImei {
     type Response = (Imei, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+GSN\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+GSN\r")
     }
 }
 
@@ -81,7 +81,7 @@ fn calculate_check_digit(imei: &str) -> u8 {
 }
 
 impl AtResponse for Imei {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::Imei(v) => Ok(v),
             _ => Err(code),

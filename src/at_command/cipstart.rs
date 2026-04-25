@@ -28,19 +28,16 @@ pub struct Connect {
 
 impl AtRequest for Connect {
     type Response = GenericOk; // TODO: should have its own type
-    fn encode(&self) -> String<256> {
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let mode = match self.mode {
             ConnectMode::Tcp => "TCP",
             ConnectMode::Udp => "UDP",
         };
 
-        let mut buf = String::new();
         write!(
             buf,
             "AT+CIPSTART={},{mode:?},{:?},\"{}\"\r",
             self.number, self.destination, self.port
         )
-        .unwrap();
-        buf
     }
 }

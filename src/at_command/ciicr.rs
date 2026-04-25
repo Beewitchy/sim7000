@@ -9,7 +9,7 @@ pub struct StartGprs;
 
 impl AtRequest for StartGprs {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        "AT+CIICR\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CIICR\r")
     }
 }

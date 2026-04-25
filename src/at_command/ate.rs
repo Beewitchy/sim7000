@@ -9,7 +9,7 @@ pub struct SetEcho(pub bool);
 
 impl AtRequest for SetEcho {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        if self.0 { "ATE1\r" } else { "ATE0\r" }.try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        if self.0 { write!(buf, "ATE1\r") } else { write!(buf, "ATE0\r") }
     }
 }

@@ -121,17 +121,17 @@ pub(crate) trait AtParseLine: Sized {
 #[cfg(feature = "defmt")]
 pub trait AtRequest: Debug + defmt::Format {
     type Response;
-    fn encode(&self) -> heapless::String<256>;
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
 }
 
 #[cfg(not(feature = "defmt"))]
 pub trait AtRequest: Debug {
     type Response;
-    fn encode(&self) -> heapless::String<256>;
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
 }
 
 pub trait AtResponse: Sized {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode>;
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode>;
 }
 
 /// Sim7000 AT-command response code

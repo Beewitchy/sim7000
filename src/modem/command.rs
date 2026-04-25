@@ -1,8 +1,9 @@
+use core::cell::RefMut;
 use core::future::Future;
-use core::{cmp::min, mem};
+use core::{cmp::min, mem, cell::RefCell};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    channel::{Receiver, Sender},
+    blocking_mutex::raw::RawMutex,
+    zerocopy_channel::{Channel, Receiver, Sender},
     mutex::{Mutex, MutexGuard},
 };
 use embassy_time::{with_timeout, Duration, TimeoutError};
@@ -16,57 +17,105 @@ use crate::Error;
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub enum RawAtCommand {
-    Text(String<256>),
-    Binary(Vec<u8, 256>),
+#[derive(Clone)]
+pub struct RawAtCommand {
+    bytes: Vec<u8, 256>,
+    binary: bool,
+}
+
+impl core::fmt::Write for RawAtCommand {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.binary = false;
+        self.bytes.extend_from_slice(s.as_bytes()).map_err(|_| core::fmt::Error)
+    }
+}
+
+impl core::iter::Extend<u8> for RawAtCommand {
+    fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
+        self.binary = true;
+        self.bytes.extend(iter)
+    }
+}
+
+impl<'a> core::iter::Extend<&'a u8> for RawAtCommand {
+    fn extend<T: IntoIterator<Item = &'a u8>>(&mut self, iter: T) {
+        self.binary = true;
+        self.bytes.extend(iter)
+    }
 }
 
 impl From<String<256>> for RawAtCommand {
     fn from(s: String<256>) -> Self {
-        RawAtCommand::Text(s)
+        RawAtCommand {
+            bytes: s.into_bytes(),
+            binary: false,
+        }
     }
 }
 
 impl From<&'_ str> for RawAtCommand {
     fn from(s: &'_ str) -> Self {
-        RawAtCommand::Text(s.try_into().unwrap_or_default())
+        RawAtCommand {
+            bytes: s.try_into().unwrap_or_default(),
+            binary: false,
+        }
+    }
+}
+
+impl From<&'_ [u8]> for RawAtCommand {
+    fn from(s: &'_ [u8]) -> Self {
+        RawAtCommand {
+            bytes: s.try_into().unwrap_or_default(),
+            binary: true,
+        }
     }
 }
 
 impl RawAtCommand {
+    pub const fn new() -> Self {
+        Self { bytes: Vec::new(), binary: false }
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            RawAtCommand::Text(s) => s.as_bytes(),
-            RawAtCommand::Binary(b) => b,
-        }
+        &self.bytes.as_bytes()
+    }
+
+    pub fn clear(&mut self) {
+        self.binary = false;
+        self.bytes.clear()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.bytes.capacity()
     }
 }
 
-#[derive(Clone)]
-pub struct CommandRunner<'a> {
-    command_lock: &'a Mutex<CriticalSectionRawMutex, ()>,
-    commands: Sender<'a, CriticalSectionRawMutex, RawAtCommand, 4>,
-    responses: Receiver<'a, CriticalSectionRawMutex, ResponseCode, 1>,
+pub struct CommandRunner<'a, M: RawMutex> {
+    command_lock: &'a Mutex<M, ()>,
+    commands: RefCell<Sender<'a, M, RawAtCommand>>,
+    responses: RefCell<Receiver<'a, M, Option<ResponseCode>>>,
 }
 
-impl<'a> CommandRunner<'a> {
-    pub fn create(ctx: &'a ModemContext) -> Self {
+impl<'a, M> CommandRunner<'a, M> where M: RawMutex + 'static {
+    pub fn create(ctx: &'a ModemContext<M>) -> Self {
+        let (sender, _) = ctx.commands.get_or_init(|| Channel::new(&mut [RawAtCommand::new(), RawAtCommand::new(), RawAtCommand::new(), RawAtCommand::new()])).split();
+        let (_, receiver) = ctx.generic_response.get_or_init(|| Channel::new(&mut [None])).split();
         CommandRunner {
             command_lock: &ctx.command_lock,
-            commands: ctx.commands.sender(),
-            responses: ctx.generic_response.receiver(),
+            commands: core::cell::RefCell::new(sender),
+            responses: core::cell::RefCell::new(receiver),
         }
     }
 }
 
-pub struct CommandRunnerGuard<'a> {
-    _commands_guard: MutexGuard<'a, CriticalSectionRawMutex, ()>,
-    runner: &'a CommandRunner<'a>,
+pub struct CommandRunnerGuard<'a, M: RawMutex> {
+    _commands_guard: MutexGuard<'a, M, ()>,
+    runner: &'a CommandRunner<'a, M>,
     timeout: Option<Duration>,
 }
 
-impl<'a> CommandRunner<'a> {
-    pub async fn lock(&'a self) -> CommandRunnerGuard<'a> {
+impl<'a, M> CommandRunner<'a, M> where M: RawMutex {
+    pub async fn lock(&'a self) -> CommandRunnerGuard<'a, M> {
         CommandRunnerGuard {
             _commands_guard: self.command_lock.lock().await,
             runner: self,
@@ -75,7 +124,7 @@ impl<'a> CommandRunner<'a> {
     }
 }
 
-impl<'a> CommandRunnerGuard<'a> {
+impl<'a, M> CommandRunnerGuard<'a, M> where M: RawMutex {
     /// Run a future with the timeout configured for self
     async fn timeout<T, F: Future<Output = T>>(&self, future: F) -> Result<T, TimeoutError> {
         Ok(match self.timeout {
@@ -87,26 +136,32 @@ impl<'a> CommandRunnerGuard<'a> {
     /// Send a request to the modem, but do not wait for a response.
     pub async fn send_request<R: AtRequest>(&self, request: &R) -> Result<(), TimeoutError> {
         self.timeout(async {
-            self.runner.commands.send(request.encode().into()).await;
+            let mut commands = self.runner.commands.borrow_mut();
+            let command = commands.send().await;
+            let _ = request.encode(command);
+            commands.send_done();
         })
         .await
     }
 
     /// Wait for the modem to return a specific response.
-    pub async fn expect_response<T: AtResponse>(&self) -> Result<T, Error> {
+    pub async fn expect_response<'r, T: AtResponse + 'r>(&mut self) ->  Result<ResponseGuard<'r, '_, T, M>, Error> where 'a: 'r {
+        let mut responses = self.runner.responses.borrow_mut();
         self.timeout(async {
             loop {
-                let response = self.runner.responses.receive().await;
-
-                match T::from_generic(response) {
-                    Ok(response) => return Ok(response),
-                    Err(ResponseCode::Error(error)) => return Err(Error::Sim(error)),
-                    Err(unknown_response) => {
-                        // TODO: we might want to make this a hard error, if/when we feel confident in
-                        // how both the driver and the modem behaves
-                        log::warn!("Got unexpected ATResponse: {:?}", unknown_response)
+                let code = responses.receive().await;
+                if let Some(code) = code {
+                    match T::from_generic(code) {
+                        Ok(received) => { return Ok(ResponseGuard { responses, response: received } ) },
+                        Err(ResponseCode::Error(error)) => return Err(Error::Sim(*error)),
+                        Err(unknown_response) => {
+                            // TODO: we might want to make this a hard error, if/when we feel confident in
+                            // how both the driver and the modem behaves
+                            log::warn!("Got unexpected ATResponse: {:?}", unknown_response)
+                        }
                     }
                 }
+                responses.receive_done();
             }
         })
         .await?
@@ -114,12 +169,14 @@ impl<'a> CommandRunnerGuard<'a> {
 
     /// Send raw bytes to the modem, use with care.
     pub async fn send_bytes(&self, mut bytes: &[u8]) {
+        let commands = self.runner.commands.borrow_mut();
         while !bytes.is_empty() {
-            let mut chunk = Vec::new();
+            let chunk = commands.send().await;
+            chunk.clear();
             let n = min(chunk.capacity(), bytes.len());
-            chunk.extend_from_slice(&bytes[..n]).unwrap();
+            let _ = chunk.extend(&bytes[..n]);
             bytes = &bytes[n..];
-            self.runner.commands.send(RawAtCommand::Binary(chunk)).await;
+            commands.send_done();
         }
     }
 
@@ -166,6 +223,11 @@ impl<'a> CommandRunnerGuard<'a> {
     pub fn with_timeout(self, timeout: Option<Duration>) -> Self {
         Self { timeout, ..self }
     }
+}
+
+pub struct ResponseGuard<'a, 'r, T: AtResponse, M: RawMutex> {
+    responses: RefMut<'r, Receiver<'a, M, Option<ResponseCode>>>,
+    response: &'r mut T,
 }
 
 /// Implemented for (tuples of) AtResponse.

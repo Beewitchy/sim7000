@@ -14,9 +14,7 @@ pub struct ConfigureGnssUrc {
 
 impl AtRequest for ConfigureGnssUrc {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CGNSURC={}\r", self.period).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSURC={}\r", self.period)
     }
 }

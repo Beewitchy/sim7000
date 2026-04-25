@@ -35,9 +35,7 @@ pub struct SetBaudRate(pub BaudRate);
 
 impl AtRequest for SetBaudRate {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+IPR={}\r", self.0 as u32).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+IPR={}\r", self.0 as u32)
     }
 }

@@ -1,4 +1,4 @@
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use futures::{select_biased, FutureExt};
@@ -14,23 +14,23 @@ pub const GNSS_SLOTS: usize = 1;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Closed;
 
-pub struct Gnss<'c> {
+pub struct Gnss<'c, M: RawMutex> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
-    reports: Option<&'c Signal<CriticalSectionRawMutex, GnssReport>>,
+    reports: Option<&'c Signal<M, GnssReport>>,
     power_signal: PowerSignalListener<'c>,
-    _drop: AsyncDrop<'c>,
+    _drop: AsyncDrop<'c, M>,
 
     /// The timeout value for waiting for a report.
     timeout: Duration,
 }
 
-impl<'c> Gnss<'c> {
+impl<'c, M> Gnss<'c, M> where M: RawMutex {
     pub(crate) fn new(
-        reports: &'c Signal<CriticalSectionRawMutex, GnssReport>,
+        reports: &'c Signal<M, GnssReport>,
         power_signal: PowerSignalListener<'c>,
-        drop_channel: &'c DropChannel,
+        drop_channel: &'c DropChannel<M>,
         timeout: Duration,
     ) -> Self {
         Gnss {

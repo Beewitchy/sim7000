@@ -22,8 +22,8 @@ pub struct NetworkApn {
 
 impl AtRequest for GetNetworkApn {
     type Response = (NetworkApn, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CGNAPN\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNAPN\r")
     }
 }
 
@@ -49,7 +49,7 @@ impl AtParseLine for NetworkApn {
 }
 
 impl AtResponse for NetworkApn {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::NetworkApn(v) => Ok(v),
             _ => Err(code),

@@ -1,4 +1,3 @@
-use heapless::String;
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
@@ -9,8 +8,8 @@ pub struct ShowIccid;
 
 impl AtRequest for ShowIccid {
     type Response = (Iccid, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CCID\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CCID\r")
     }
 }
 
@@ -51,7 +50,7 @@ impl AtParseLine for Iccid {
 }
 
 impl AtResponse for Iccid {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::Iccid(iccid) => Ok(iccid),
             _ => Err(code),

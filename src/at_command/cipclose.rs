@@ -12,9 +12,7 @@ pub struct CloseConnection {
 
 impl AtRequest for CloseConnection {
     type Response = CloseOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CIPCLOSE={}\r", self.connection).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CIPCLOSE={}\r", self.connection)
     }
 }

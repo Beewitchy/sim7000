@@ -1,5 +1,8 @@
+use core::cell::OnceCell;
+
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, mutex::Mutex, pipe::Pipe,
+    blocking_mutex::raw::RawMutex, zerocopy_channel::Channel, mutex::Mutex, pipe::Pipe,
+    channel::Channel as CopyChannel,
     signal::Signal,
 };
 
@@ -19,35 +22,36 @@ use crate::{
     StateSignal,
 };
 
-pub type TcpRxPipe = Pipe<CriticalSectionRawMutex, TCP_RX_BUF_LEN>;
-pub type TcpEventChannel = RingChannel<CriticalSectionRawMutex, ConnectionMessage, 8>;
+pub type TcpRxPipe<M: RawMutex> = Pipe<M, TCP_RX_BUF_LEN>;
+pub type TcpEventChannel<M: RawMutex> = RingChannel<M, ConnectionMessage, 8>;
 
-pub struct ModemContext {
+pub struct ModemContext<M: RawMutex + 'static> {
     pub(crate) power_signal: PowerSignal,
-    pub(crate) command_lock: Mutex<CriticalSectionRawMutex, ()>,
-    pub(crate) commands: Channel<CriticalSectionRawMutex, RawAtCommand, 4>,
-    pub(crate) generic_response: Channel<CriticalSectionRawMutex, ResponseCode, 1>,
-    pub(crate) drop_channel: DropChannel,
-    pub(crate) tcp: TcpContext,
-    pub(crate) sms_indices: Channel<CriticalSectionRawMutex, NewSmsIndex, 5>,
-    pub(crate) sms_state: Signal<CriticalSectionRawMutex, SmsState>,
-    pub(crate) registration_events: StateSignal<CriticalSectionRawMutex, NetworkRegistration>,
-    pub(crate) gnss_slot: Slot<Signal<CriticalSectionRawMutex, GnssReport>>,
-    pub(crate) voltage_slot: Slot<Signal<CriticalSectionRawMutex, VoltageWarning>>,
-    pub(crate) tx_pipe: Pipe<CriticalSectionRawMutex, 2048>,
-    pub(crate) rx_pipe: Pipe<CriticalSectionRawMutex, 2048>,
+    pub(crate) command_lock: Mutex<M, ()>,
+    pub(crate) commands: OnceCell<Channel<'static, M, RawAtCommand>>,
+    pub(crate) generic_response: OnceCell<Channel<'static, M, Option<ResponseCode>>>,
+    pub(crate) drop_channel: DropChannel<M>,
+    pub(crate) tcp: TcpContext<M>,
+    pub(crate) sms_indices: CopyChannel<M, NewSmsIndex, 5>,
+    pub(crate) sms_state: Signal<M, SmsState>,
+    pub(crate) registration_events: StateSignal<M, NetworkRegistration>,
+    pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
+    pub(crate) voltage_slot: Slot<Signal<M, VoltageWarning>>,
+    pub(crate) tx_pipe: Pipe<M, 2048>,
+    pub(crate) rx_pipe: Pipe<M, 2048>,
 }
 
-impl ModemContext {
-    pub const fn new(tcp: TcpContext) -> Self {
+impl<M> ModemContext<M> where M: RawMutex {
+    pub const fn new(tcp: TcpContext<M>) -> Self {
+        static COMMAND_BUFFER: [Option<RawAtCommand>; 4] = [None, None, None, None];
         ModemContext {
             power_signal: PowerSignal::new(),
             command_lock: Mutex::new(()),
-            commands: Channel::new(),
-            generic_response: Channel::new(),
+            commands: OnceCell::new(),
+            generic_response: OnceCell::new(),
             drop_channel: DropChannel::new(),
             tcp,
-            sms_indices: Channel::new(),
+            sms_indices: CopyChannel::new(),
             sms_state: Signal::new(),
             registration_events: StateSignal::new(NetworkRegistration {
                 status: RegistrationStatus::Unknown,
@@ -61,21 +65,21 @@ impl ModemContext {
         }
     }
 
-    pub fn commands(&self) -> CommandRunner<'_> {
+    pub fn commands(&self) -> CommandRunner<'_, M> {
         CommandRunner::create(self)
     }
 }
 
-pub struct TcpSlot {
-    pub rx: TcpRxPipe,
-    pub events: TcpEventChannel,
+pub struct TcpSlot<M: RawMutex> {
+    pub rx: TcpRxPipe<M>,
+    pub events: TcpEventChannel<M>,
 }
 
-pub struct TcpContext {
-    pub(crate) slots: &'static [Slot<TcpSlot>],
+pub struct TcpContext<M: RawMutex + 'static> {
+    pub(crate) slots: &'static [Slot<TcpSlot<M>>],
 }
 
-impl TcpSlot {
+impl<M> TcpSlot<M> where M: RawMutex {
     pub const fn new() -> Self {
         TcpSlot {
             rx: Pipe::new(),
@@ -84,12 +88,12 @@ impl TcpSlot {
     }
 }
 
-impl TcpContext {
-    pub const fn new(slots: &'static [Slot<TcpSlot>]) -> Self {
+impl<M> TcpContext<M> where M: RawMutex + 'static {
+    pub const fn new(slots: &'static [Slot<TcpSlot<M>>]) -> Self {
         TcpContext { slots }
     }
 
-    pub fn claim(&self) -> Option<TcpToken<'_>> {
+    pub fn claim(&self) -> Option<TcpToken<'_, M>> {
         self.slots.iter().enumerate().find_map(|(i, slot)| {
             let TcpSlot { rx, events } = slot.claim()?; // find an unclaimed slot
             Some(TcpToken {
@@ -109,18 +113,18 @@ impl TcpContext {
     }
 }
 
-pub struct TcpToken<'c> {
+pub struct TcpToken<'c, M: RawMutex> {
     ordinal: usize,
-    rx: &'c TcpRxPipe,
-    events: &'c RingChannel<CriticalSectionRawMutex, ConnectionMessage, 8>,
+    rx: &'c TcpRxPipe<M>,
+    events: &'c RingChannel<M, ConnectionMessage, 8>,
 }
 
-impl<'c> TcpToken<'c> {
+impl<'c, M> TcpToken<'c, M> where M: RawMutex{
     pub fn ordinal(&self) -> usize {
         self.ordinal
     }
 
-    pub fn rx(&self) -> &'c TcpRxPipe {
+    pub fn rx(&self) -> &'c TcpRxPipe<M> {
         self.rx
     }
 

@@ -33,14 +33,11 @@ pub enum SmsMtMode {
 
 impl AtRequest for SetSmsIndication {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+CNMI={},{},0,0,0\r",
             self.mode as u8, self.routing as u8
         )
-        .unwrap();
-        buf
     }
 }

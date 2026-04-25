@@ -9,12 +9,11 @@ pub struct SetSlowClock(pub bool);
 
 impl AtRequest for SetSlowClock {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if self.0 {
-            "AT+CSCLK=1\r"
+            write!(buf, "AT+CSCLK=1\r")
         } else {
-            "AT+CSCLK=0\r"
+            write!(buf, "AT+CSCLK=0\r")
         }
-        .try_into().unwrap_or_default()
     }
 }

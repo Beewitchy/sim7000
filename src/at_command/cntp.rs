@@ -19,22 +19,19 @@ pub struct Execute;
 
 impl AtRequest for SynchronizeNetworkTime {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+CNTP={:?},{},{}\r",
             self.ntp_server, self.timezone, self.cid
         )
-        .unwrap();
-        buf
     }
 }
 
 impl AtRequest for Execute {
     type Response = (GenericOk, NetworkTime);
-    fn encode(&self) -> String<256> {
-        "AT+CNTP\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CNTP\r")
     }
 }
 
@@ -80,7 +77,7 @@ impl AtParseLine for NetworkTime {
 }
 
 impl AtResponse for NetworkTime {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::NetworkTime(v) => Ok(v),
             _ => Err(code),

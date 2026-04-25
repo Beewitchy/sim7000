@@ -22,14 +22,11 @@ pub enum FlowControl {
 
 impl AtRequest for SetFlowControl {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+IFC={},{}\r",
             self.dce_by_dte as u8, self.dte_by_dce as u8
         )
-        .unwrap();
-        buf
     }
 }

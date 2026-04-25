@@ -10,10 +10,8 @@ pub struct SetSmsMessageFormat(pub SmsMessageFormat);
 
 impl AtRequest for SetSmsMessageFormat {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CMGF={}\r", self.0 as u8).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CMGF={}\r", self.0 as u8)
     }
 }
 
@@ -24,8 +22,8 @@ pub struct GetSmsMessageFormat;
 
 impl AtRequest for GetSmsMessageFormat {
     type Response = (SmsMessageFormat, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CMGF?\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CMGF?\r")
     }
 }
 
@@ -54,7 +52,7 @@ impl AtParseLine for SmsMessageFormat {
 }
 
 impl AtResponse for SmsMessageFormat {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::SmsMessageFormat(format) => Ok(format),
             _ => Err(code),

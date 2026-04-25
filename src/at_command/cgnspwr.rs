@@ -10,10 +10,8 @@ pub struct SetGnssPower(pub bool);
 
 impl AtRequest for SetGnssPower {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let arg = if self.0 { "1" } else { "0" };
-        write!(buf, "AT+CGNSPWR={arg}\r").unwrap();
-        buf
+        write!(buf, "AT+CGNSPWR={arg}\r")
     }
 }

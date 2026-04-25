@@ -28,21 +28,18 @@ pub struct GetGnssWorkModeSet;
 
 impl AtRequest for SetGnssWorkModeSet {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
             "AT+CGNSMOD=1,{},{},{}\r",
             self.glonass as u8, self.beidou as u8, self.galilean as u8
         )
-        .unwrap();
-        buf
     }
 }
 
 impl AtRequest for GetGnssWorkModeSet {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        "AT+CGNSMOD?\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSMOD?\r")
     }
 }

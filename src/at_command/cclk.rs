@@ -9,8 +9,8 @@ pub struct GetTime;
 
 impl AtRequest for GetTime {
     type Response = (CclkTime, GenericOk);
-    fn encode(&self) -> String<256> {
-        "AT+CCLK?\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CCLK?\r")
     }
 }
 
@@ -29,10 +29,10 @@ impl AtParseLine for CclkTime {
 }
 
 impl AtResponse for CclkTime {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::CclkTime(time) => Ok(time),
-            _ => Err(code),
+            _ => Err(()),
         }
     }
 }

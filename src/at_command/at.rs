@@ -8,7 +8,7 @@ pub struct At;
 
 impl AtRequest for At {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
-        "AT\r".try_into().unwrap_or_default()
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT\r")
     }
 }

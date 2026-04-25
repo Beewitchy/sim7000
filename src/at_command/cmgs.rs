@@ -19,19 +19,15 @@ pub struct SendSmsMessage(pub String<160>);
 
 impl AtRequest for SendSms {
     type Response = WritePrompt;
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "AT+CMGS=\"{}\"\r", self.destination).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CMGS=\"{}\"\r", self.destination)
     }
 }
 
 impl AtRequest for SendSmsMessage {
     type Response = (MessageReference, GenericOk);
-    fn encode(&self) -> String<256> {
-        let mut buf = String::new();
-        write!(buf, "{}\x1A", self.0).unwrap();
-        buf
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "{}\x1A", self.0)
     }
 }
 
@@ -56,7 +52,7 @@ impl AtParseLine for MessageReference {
 }
 
 impl AtResponse for MessageReference {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::MessageReference(format) => Ok(format),
             _ => Err(code),

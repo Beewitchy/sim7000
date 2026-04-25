@@ -19,7 +19,7 @@
 //! ```
 
 use core::mem::drop;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Channel};
 
 use crate::at_command::{CloseConnection, SetGnssPower};
 use crate::gnss::GNSS_SLOTS;
@@ -31,21 +31,21 @@ use crate::Error;
 /// The capacity of the drop channel.
 /// Nust be at least the number of unique objects that can be dropped.
 const DROP_CAPACITY: usize = GNSS_SLOTS + MAX_TCP_SLOTS;
-pub type DropChannel = Channel<CriticalSectionRawMutex, DropMessage, DROP_CAPACITY>;
+pub type DropChannel<M: RawMutex> = Channel<M, DropMessage, DROP_CAPACITY>;
 
 /// Type for facilitating asynchronous dropping. See module-level docs for details.
-pub struct AsyncDrop<'c> {
-    channel: &'c DropChannel,
+pub struct AsyncDrop<'c, M: RawMutex> {
+    channel: &'c DropChannel<M>,
     message: DropMessage,
 }
 
-impl<'c> AsyncDrop<'c> {
-    pub fn new(channel: &'c DropChannel, message: DropMessage) -> Self {
+impl<'c, M> AsyncDrop<'c, M> where M: RawMutex {
+    pub fn new(channel: &'c DropChannel<M>, message: DropMessage) -> Self {
         AsyncDrop { channel, message }
     }
 }
 
-impl Drop for AsyncDrop<'_> {
+impl<M> Drop for AsyncDrop<'_, M> where M: RawMutex {
     fn drop(&mut self) {
         if self.channel.try_send(self.message).is_err() {
             log::error!("Failed to drop {:?}: Drop channel full", self.message);
@@ -68,7 +68,7 @@ pub enum DropMessage {
 
 impl DropMessage {
     /// Run the Drop logic for this message.
-    pub async fn run(&self, runner: &mut CommandRunnerGuard<'_>) -> Result<(), Error> {
+    pub async fn run<M: RawMutex>(&self, runner: &mut CommandRunnerGuard<'_, M>) -> Result<(), Error> {
         log::debug!("Sending drop command for {:?}", self);
 
         /// It is Ok for the result to be a SimError
@@ -99,7 +99,7 @@ impl DropMessage {
 
     /// Clean up logic that gets run after running the drop logic, regardless of whether the drop
     /// logic errored or not.
-    pub fn clean_up(&self, ctx: &ModemContext) {
+    pub fn clean_up<M: RawMutex>(&self, ctx: &ModemContext<M>) {
         log::debug!("Cleaning up after {:?}", self);
         match self {
             &DropMessage::Connection(n) => {

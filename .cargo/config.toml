@@ -1,2 +1,7 @@
+[build]
+rustflags = [
+	"-Zpolonius=next",
+]
+
 [unstable]
 build-std = ["alloc", "core"]

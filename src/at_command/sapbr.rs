@@ -33,26 +33,21 @@ pub struct BearerSettings {
 
 impl AtRequest for BearerSettings {
     type Response = GenericOk;
-    fn encode(&self) -> String<256> {
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let con_param_type = match self.con_param_type {
             ConParamType::Apn => "APN",
             ConParamType::User => "USER",
             ConParamType::Pwd => "PWD,",
         };
 
-        let mut buf = String::new();
-
         match self.cmd_type {
-            CmdType::OpenBearer => write!(buf, "AT+SAPBR={},1\r", self.cmd_type as u8).unwrap(),
+            CmdType::OpenBearer => write!(buf, "AT+SAPBR={},1\r", self.cmd_type as u8),
             CmdType::SetBearerParameters => write!(
                 buf,
                 "AT+SAPBR={},1,{:?},{:?}\r",
                 self.cmd_type as u8, con_param_type, self.apn
-            )
-            .unwrap(),
-            _ => todo!(),
+            ),
+            _ => Err(core::fmt::Error::default()),
         }
-
-        buf
     }
 }

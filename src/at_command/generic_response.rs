@@ -4,7 +4,7 @@ use super::{AtParseErr, AtParseLine, AtResponse, ResponseCode};
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GenericOk;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SimError {
     /// Generic error
@@ -37,7 +37,7 @@ impl AtParseLine for GenericOk {
 }
 
 impl AtResponse for GenericOk {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::Ok(ok) => Ok(ok),
             _ => Err(code),
@@ -72,7 +72,7 @@ impl AtParseLine for WritePrompt {
 }
 
 impl AtResponse for WritePrompt {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::WritePrompt(prompt) => Ok(prompt),
             _ => Err(code),
@@ -92,7 +92,7 @@ impl AtParseLine for CloseOk {
 }
 
 impl AtResponse for CloseOk {
-    fn from_generic(code: ResponseCode) -> Result<Self, ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
         match code {
             ResponseCode::CloseOk(close_ok) => Ok(close_ok),
             _ => Err(code),

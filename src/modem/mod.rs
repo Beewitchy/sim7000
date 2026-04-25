@@ -50,10 +50,10 @@ pub struct Disabled;
 pub struct Enabled;
 pub struct Sleeping;
 
-pub struct Modem<'c, P> {
-    context: &'c ModemContext,
+pub struct Modem<'c, P, M: RawMutex> {
+    context: &'c ModemContext<M>,
     power_signal: PowerSignalBroadcaster<'c>,
-    commands: CommandRunner<'c>,
+    commands: CommandRunner<'c, M>,
     power: P,
     apn: Option<heapless::String<63>>,
     ap_username: &'static str,
@@ -765,17 +765,17 @@ impl<'c, P: ModemPower> Modem<'c, P> {
     }
 }
 
-pub struct SmsStream<'a> {
-    sms_indicies: Receiver<'a, CriticalSectionRawMutex, NewSmsIndex, 5>,
-    commands: CommandRunner<'a>,
+pub struct SmsStream<'a, M: RawMutex> {
+    sms_indicies: Receiver<'a, M, NewSmsIndex, 5>,
+    commands: CommandRunner<'a, M>,
     // state: &'a Signal<CriticalSectionRawMutex, SmsState>,
 }
 
-pub struct SmsSignal<'a> {
-    inner: &'a Signal<CriticalSectionRawMutex, SmsState>,
+pub struct SmsSignal<'a, M: RawMutex> {
+    inner: &'a Signal<M, SmsState>,
 }
 
-impl SmsSignal<'_> {
+impl<M> SmsSignal<'_, M> {
     pub async fn wait_for_available(&self) {
         loop {
             let state = self.inner.wait().await;
@@ -800,7 +800,7 @@ pub(crate) enum SmsState {
     Unavailable,
 }
 
-impl SmsStream<'_> {
+impl<M> SmsStream<'_, M> {
     pub async fn read_sms(&mut self) -> Result<SmsMessage, Error> {
         let index = with_timeout(Duration::from_secs(1), self.sms_indicies.receive()).await?;
         log::info!("Reading SMS at index: {:?}", index);
