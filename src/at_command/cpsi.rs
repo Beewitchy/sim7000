@@ -25,7 +25,7 @@ pub enum SystemMode {
     LteNbIot,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OperationMode {
     Online,
@@ -35,7 +35,7 @@ pub enum OperationMode {
     LowPower,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SystemInfo {
     pub system_mode: SystemMode,
@@ -73,10 +73,10 @@ impl AtParseLine for SystemInfo {
 }
 
 impl AtResponse for SystemInfo {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::SystemInfo(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::SystemInfo(v) => Some(v),
+            _ => None,
         }
     }
 }

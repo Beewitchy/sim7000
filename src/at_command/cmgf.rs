@@ -52,10 +52,10 @@ impl AtParseLine for SmsMessageFormat {
 }
 
 impl AtResponse for SmsMessageFormat {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::SmsMessageFormat(format) => Ok(format),
-            _ => Err(code),
+            ResponseCode::SmsMessageFormat(format) => Some(format),
+            _ => None,
         }
     }
 }

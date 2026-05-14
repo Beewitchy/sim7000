@@ -1,6 +1,6 @@
 use cipstart::ConnectMode;
 use core::sync::atomic::{AtomicBool, Ordering};
-use embassy_sync::{blocking_mutex::raw::RawMutex, pubsub::PubSubChannel};
+use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::Mutex, pubsub::PubSubChannel};
 use embassy_time::{with_timeout, Duration, TimeoutError, Timer};
 use embedded_io_async::{
     ErrorType, {Read, Write},
@@ -71,40 +71,40 @@ impl From<crate::Error> for ConnectError {
     }
 }
 
-pub struct TcpStream<'s> {
-    token: TcpToken<'s>,
-    _drop: AsyncDrop<'s>,
-    commands: CommandRunner<'s>,
+pub struct TcpStream<'s, 'c, M: embassy_sync::blocking_mutex::raw::RawMutex> {
+    token: TcpToken<'s, M>,
+    _drop: AsyncDrop<'s, M>,
+    commands: &'s Mutex<M, CommandRunner<'c, M>>,
 
     /// Whether the stream is closed
     closed: AtomicBool,
 
     /// A channel to proxy ConnectionMessages to both the TcpWriter and TcpReader.
-    events: PubSubChannel<CriticalSectionRawMutex, ConnectionMessage, 1, 2, 2>,
+    events: PubSubChannel<M, ConnectionMessage, 1, 2, 2>,
 
     /// Timeout of read/write operations
     timeout: Duration,
 }
 
-pub struct TcpReader<'s> {
-    stream: &'s TcpStream<'s>,
+pub struct TcpReader<'s, 'c, M: embassy_sync::blocking_mutex::raw::RawMutex> {
+    stream: &'s TcpStream<'s, 'c, M>,
 }
 
-pub struct TcpWriter<'s> {
-    stream: &'s TcpStream<'s>,
+pub struct TcpWriter<'s, 'c, M: embassy_sync::blocking_mutex::raw::RawMutex> {
+    stream: &'s TcpStream<'s, 'c, M>,
 }
 
-impl ErrorType for TcpStream<'_> {
+impl<M> ErrorType for TcpStream<'_, '_, M> where M: embassy_sync::blocking_mutex::raw::RawMutex {
     type Error = TcpError;
 }
-impl ErrorType for TcpWriter<'_> {
+impl<M> ErrorType for TcpWriter<'_, '_, M> where M: embassy_sync::blocking_mutex::raw::RawMutex {
     type Error = TcpError;
 }
-impl ErrorType for TcpReader<'_> {
+impl<M> ErrorType for TcpReader<'_, '_, M> where M: embassy_sync::blocking_mutex::raw::RawMutex {
     type Error = TcpError;
 }
 
-impl Drop for TcpStream<'_> {
+impl<M> Drop for TcpStream<'_, '_, M> where M: embassy_sync::blocking_mutex::raw::RawMutex {
     fn drop(&mut self) {
         // TODO: it's likely not sufficient to clear the buffer like this,
         // if the channel is full and the RxPump is blocked, more stuff might be added later
@@ -112,14 +112,14 @@ impl Drop for TcpStream<'_> {
     }
 }
 
-impl<'s, M> TcpStream<'s, M> where M: RawMutex {
+impl<'s, 'c, M> TcpStream<'s, 'c, M> where M: RawMutex {
     pub(crate) async fn connect(
         token: TcpToken<'s, M>,
         host: &str,
         port: u16,
         drop_channel: &'s DropChannel<M>,
-        commands: Modem<'s, M>,
-    ) -> Result<TcpStream<'s>, ConnectError> {
+        commands: &'s Mutex<M, CommandRunner<'c, M>>,
+    ) -> Result<TcpStream<'s, 'c, M>, ConnectError> {
         // create a drop guard here, so that if this function errors,
         // we make sure to clean up the connection
         let drop_guard = AsyncDrop::new(drop_channel, DropMessage::Connection(token.ordinal()));

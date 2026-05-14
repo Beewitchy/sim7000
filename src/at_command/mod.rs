@@ -131,7 +131,7 @@ pub trait AtRequest: Debug {
 }
 
 pub trait AtResponse: Sized {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode>;
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self>;
 }
 
 /// Sim7000 AT-command response code

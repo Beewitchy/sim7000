@@ -16,7 +16,7 @@ impl AtRequest for CopyXtraFile {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CopyResponse {
     Success = 0,
@@ -47,10 +47,10 @@ impl AtParseLine for CopyResponse {
 }
 
 impl AtResponse for CopyResponse {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::CopyResponse(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::CopyResponse(v) => Some(v),
+            _ => None,
         }
     }
 }

@@ -6,7 +6,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 /// AT+CMGS=...
 ///
 /// This has to be sent before sending the message [SendSmsMessage]. Likewise, the [SendSmsMessage] has to be sent directly after this.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SendSms {
     pub destination: String<20>,
@@ -52,10 +52,10 @@ impl AtParseLine for MessageReference {
 }
 
 impl AtResponse for MessageReference {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::MessageReference(format) => Ok(format),
-            _ => Err(code),
+            ResponseCode::MessageReference(format) => Some(format),
+            _ => None,
         }
     }
 }

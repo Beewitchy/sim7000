@@ -45,7 +45,7 @@ impl AtRequest for GetFwVersion {
 ///  └── Some kind of hardware version number. This doesn't seem to change
 ///      between firmware versions.
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FwVersion(pub String<MAX_VERSION_LEN>);
 
@@ -62,10 +62,10 @@ impl AtParseLine for FwVersion {
 }
 
 impl AtResponse for FwVersion {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::FwVersion(fw_version) => Ok(fw_version),
-            _ => Err(code),
+            ResponseCode::FwVersion(fw_version) => Some(fw_version),
+            _ => None,
         }
     }
 }

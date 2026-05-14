@@ -17,7 +17,7 @@ impl AtRequest for ReadSms {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SmsMessage {
     pub sender: String<20>,
@@ -57,18 +57,18 @@ impl AtParseLine for SmsMessage {
 // }
 
 impl AtResponse for SmsMessage {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::SmsMessage(sms) => Ok(sms),
-            _ => Err(code),
+            ResponseCode::SmsMessage(sms) => Some(sms),
+            _ => None,
         }
     }
 }
 // impl AtResponse for SmsInfo {
-//     fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+//     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
 //         match code {
 //             ResponseCode::SmsInfo(sms) => Ok(sms),
-//             _ => Err(code),
+//             _ => None,
 //         }
 //     }
 // }

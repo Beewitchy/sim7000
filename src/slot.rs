@@ -4,12 +4,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::log;
 
-pub struct Slot<T: 'static> {
+pub struct Slot<T> {
     is_claimed: AtomicBool,
     inner: T,
 }
 
-impl<T: 'static> Slot<T> {
+impl<T> Slot<T> {
     pub const fn new(inner: T) -> Self {
         Slot {
             inner,

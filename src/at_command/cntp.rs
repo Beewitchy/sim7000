@@ -35,7 +35,7 @@ impl AtRequest for Execute {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SyncNtpStatusCode {
     Success = 1,
@@ -46,7 +46,7 @@ pub enum SyncNtpStatusCode {
     ServiceResponseTimeout = 65,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkTime {
     pub code: SyncNtpStatusCode,
@@ -77,10 +77,10 @@ impl AtParseLine for NetworkTime {
 }
 
 impl AtResponse for NetworkTime {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::NetworkTime(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::NetworkTime(v) => Some(v),
+            _ => None,
         }
     }
 }

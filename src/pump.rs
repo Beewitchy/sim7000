@@ -6,7 +6,9 @@ use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
+    mutex::Mutex,
     channel::{Receiver, Sender},
+    zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
     pipe::Pipe,
     signal::Signal,
 };
@@ -22,7 +24,8 @@ use crate::at_command::{
     AtParseLine, ResponseCode,
 };
 use crate::log;
-use crate::modem::{ModemContext, RawAtCommand, TcpContext};
+use crate::modem::{Shared, RawAtCommand, TcpContext, CommandRunner};
+use crate::drop::DropReceiver;
 use crate::read::ModemReader;
 use crate::Error;
 
@@ -34,10 +37,10 @@ pub trait Pump {
     fn pump(&mut self) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
-pub struct RxPump<'context, M: RawMutex + 'static> {
-    pub(crate) reader: ModemReader<'context>,
-    pub(crate) generic_response: Sender<'context, M, ResponseCode, 1>,
-    pub(crate) tcp: &'context TcpContext<M>,
+pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
+    pub(crate) reader: ModemReader<'context, M>,
+    pub(crate) generic_response: ZerocopySender<'context, M, ResponseCode>,
+    pub(crate) tcp: &'context TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
     pub(crate) registration_events:
@@ -45,7 +48,7 @@ pub struct RxPump<'context, M: RawMutex + 'static> {
     pub(crate) sms_indices: Sender<'context, M, NewSmsIndex, 5>,
 }
 
-impl<'context, M> Pump for RxPump<'context, M> where M: RawMutex {
+impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -126,15 +129,13 @@ impl<'context, M> Pump for RxPump<'context, M> where M: RawMutex {
             }
 
             log::debug!("Got generic response: {:?}", line.as_str());
-            if with_timeout(
+            let mut buf = with_timeout(
                 Duration::from_secs(10),
-                self.generic_response.send(response),
+                self.generic_response.send(),
             )
-            .await
-            .is_err()
-            {
-                log::error!("message queue send timed out");
-            }
+            .await?;
+            *buf = response;
+            buf.send_done();
         } else {
             // The modem likely sent us gibberish we could not understand.
             // TODO: We might want to trigger a reboot when the modem starts acting like this.
@@ -147,7 +148,7 @@ impl<'context, M> Pump for RxPump<'context, M> where M: RawMutex {
 
 pub struct TxPump<'context, M: RawMutex> {
     pub(crate) writer: &'context Pipe<M, 2048>,
-    pub(crate) commands: Receiver<'context, M, RawAtCommand, 4>,
+    pub(crate) commands: ZerocopyReceiver<'context, M, RawAtCommand>,
 }
 
 impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
@@ -171,13 +172,14 @@ impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
     }
 }
 
-pub struct DropPump<'context, M: RawMutex + 'static> {
-    pub(crate) context: &'context ModemContext<M>,
-    pub(crate) power_signal: PowerSignalListener<'context>,
+pub struct DropPump<'pump, M: RawMutex, const TCP_SLOTS: usize> {
+    pub(crate) context: &'pump Shared<M, TCP_SLOTS>,
+    pub(crate) commands: &'pump Mutex<M, CommandRunner<'pump, M>>,
+    pub(crate) power_signal: PowerSignalListener<'pump>,
     pub(crate) power_state: PowerState,
 }
 
-impl<'context, M> Pump for DropPump<'context, M> where M: RawMutex {
+impl<'pump, M, const TCP_SLOTS: usize> Pump for DropPump<'pump, M, TCP_SLOTS> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -195,8 +197,7 @@ impl<'context, M> Pump for DropPump<'context, M> where M: RawMutex {
                         }
                         result = async {
                             // run drop command
-                            let runner = self.context.commands();
-                            let mut runner = runner.lock().await;
+                            let mut runner = self.commands.lock().await;
                             drop_message.run(&mut runner).await
                         }.fuse() => result,
                     };
@@ -224,7 +225,7 @@ pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) power_state: PowerState,
 }
 
-impl<'context, RW: 'context + BuildIo> RawIoPump<'context, RW> {
+impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
     pub async fn high_power_pump(&mut self) -> Result<(), Error> {
         let mut io = Some(self.io.build());
         let (mut reader, mut writer) = RW::IO::split(&mut io);
@@ -274,7 +275,7 @@ impl<'context, RW: 'context + BuildIo> RawIoPump<'context, RW> {
     }
 }
 
-impl<'context, RW: 'context + BuildIo> Pump for RawIoPump<'context, RW> {
+impl<'context, RW: 'context + BuildIo, M: RawMutex> Pump for RawIoPump<'context, RW, M> {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -288,11 +289,11 @@ impl<'context, RW: 'context + BuildIo> Pump for RawIoPump<'context, RW> {
     }
 }
 
-pub struct RegistrationHandler<'context> {
-    context: &'context Signal<CriticalSectionRawMutex, NetworkRegistration>,
+pub struct RegistrationHandler<'context, M: RawMutex> {
+    context: &'context Signal<M, NetworkRegistration>,
 }
 
-impl<'context> RegistrationHandler<'context> {
+impl<'context, M: RawMutex> RegistrationHandler<'context, M> {
     pub async fn pump(&mut self) {
         match self.context.wait().await.status {
             RegistrationStatus::NotRegistered

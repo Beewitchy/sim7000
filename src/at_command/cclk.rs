@@ -29,10 +29,10 @@ impl AtParseLine for CclkTime {
 }
 
 impl AtResponse for CclkTime {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::CclkTime(time) => Ok(time),
-            _ => Err(code),
+            ResponseCode::CclkTime(time) => Some(time),
+            _ => None,
         }
     }
 }

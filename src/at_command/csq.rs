@@ -14,7 +14,7 @@ impl AtRequest for GetSignalQuality {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SignalQuality {
     /// Signal strength percenage
@@ -66,10 +66,10 @@ impl AtParseLine for SignalQuality {
 }
 
 impl AtResponse for SignalQuality {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::SignalQuality(sq) => Ok(sq),
-            _ => Err(code),
+            ResponseCode::SignalQuality(sq) => Some(sq),
+            _ => None,
         }
     }
 }

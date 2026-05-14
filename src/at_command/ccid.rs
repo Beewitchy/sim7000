@@ -13,7 +13,7 @@ impl AtRequest for ShowIccid {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Iccid {
     pub country: u8,
@@ -50,10 +50,10 @@ impl AtParseLine for Iccid {
 }
 
 impl AtResponse for Iccid {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::Iccid(iccid) => Ok(iccid),
-            _ => Err(code),
+            ResponseCode::Iccid(iccid) => Some(iccid),
+            _ => None,
         }
     }
 }

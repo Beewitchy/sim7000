@@ -14,7 +14,7 @@ impl AtRequest for GetImei {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Imei {
     pub imei: String<16>,
@@ -81,10 +81,10 @@ fn calculate_check_digit(imei: &str) -> u8 {
 }
 
 impl AtResponse for Imei {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::Imei(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::Imei(v) => Some(v),
+            _ => None,
         }
     }
 }

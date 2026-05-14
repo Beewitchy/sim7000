@@ -1,10 +1,18 @@
-use core::cell::RefMut;
-use core::future::Future;
-use core::{cell::RefCell, cmp::min, mem};
+use core::{
+    cell::{RefCell, RefMut},
+    cmp::min,
+    future::Future,
+    marker::PhantomData,
+    mem::{self, ManuallyDrop},
+};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    mutex::{Mutex, MutexGuard},
-    zerocopy_channel::{Channel, Receiver, Sender},
+    channel::{Channel, Receiver, Sender},
+    mutex::{MappedMutexGuard, Mutex, MutexGuard},
+    zerocopy_channel::{
+        Channel as ZerocopyChannel, ReceiveSlot, Receiver as ZerocopyReceiver,
+        Sender as ZerocopySender,
+    },
 };
 use embassy_time::{Duration, TimeoutError, with_timeout};
 use heapless::{String, Vec};
@@ -12,7 +20,7 @@ use heapless::{String, Vec};
 use crate::Error;
 use crate::at_command::{AtRequest, AtResponse, ResponseCode};
 use crate::log;
-use crate::modem::ModemContext;
+use crate::modem::{ModemContext, PacketChannels};
 
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -95,91 +103,154 @@ impl RawAtCommand {
     }
 }
 
-pub struct CommandRunner<'a, M: RawMutex> {
-    commands: Sender<'a, M, RawAtCommand>,
-    responses: Receiver<'a, M, Option<ResponseCode>>,
-}
-
-impl<'a, M> CommandRunner<'a, M>
-where
-    M: RawMutex + 'static,
-{
-    pub fn create(ctx: &'a mut ModemContext<M>) -> Self {
-        CommandRunner {
-            commands: sender,
-            responses: receiver,
-        }
-    }
-}
-
-pub struct CommandRunnerGuard<'a, M: RawMutex> {
-    runner: MutexGuard<'a, M, CommandRunner<'a, M>>,
+pub struct CommandRunner<'r, M: RawMutex> {
+    commands: ZerocopySender<'r, M, RawAtCommand>,
+    responses: ZerocopyReceiver<'r, M, ResponseCode>,
     timeout: Option<Duration>,
 }
 
-impl<'a, M> CommandRunner<'a, M>
-where
-    M: RawMutex,
-{
-    pub async fn lock(mutex: &'a embassy_sync::mutex::Mutex<M, Self>) -> CommandRunnerGuard<'a, M> {
-        let runner = mutex.lock().await;
-        CommandRunnerGuard {
-            runner,
-            timeout: Some(AT_DEFAULT_TIMEOUT),
+pub struct ReceiveSlotRef<'r, M: RawMutex, T> {
+    slot: ManuallyDrop<ReceiveSlot<'r, M, T>>,
+}
+
+pub struct MappedReceiveSlotRef<'r, M: RawMutex, U, T> {
+    data: core::ptr::NonNull<U>,
+    orig: ReceiveSlotRef<'r, M, T>,
+    _variance: PhantomData<&'r mut T>,
+}
+
+// Derived from core::mem::DropGuard--takes the value in the
+//  ManuallyDrop cell and calls receive_done before it drops
+impl<'r, M: RawMutex, T> Drop for ReceiveSlotRef<'r, M, T> {
+    fn drop(&mut self) {
+        // SAFETY: `ReceiveSlotRef` is in the process of being dropped.
+        let inner = unsafe { ManuallyDrop::take(&mut self.slot) };
+        inner.receive_done();
+    }
+}
+
+impl<'r, M: RawMutex, T> ReceiveSlotRef<'r, M, T> {
+    fn new(slot: ReceiveSlot<'r, M, T>) -> Self {
+        Self {
+            slot: ManuallyDrop::new(slot),
+        }
+    }
+
+    pub fn filter_map<U, F>(orig: Self, f: F) -> Result<MappedReceiveSlotRef<'r, M, U, T>, Self>
+    where
+        F: FnOnce(&mut T) -> Option<&mut U>,
+        U: Sized,
+    {
+        let mut orig = orig;
+        match f(&mut orig.slot) {
+            Some(data) => {
+                let data = core::ptr::NonNull::from(data);
+                Ok(MappedReceiveSlotRef {
+                    data,
+                    orig,
+                    _variance: PhantomData,
+                })
+            }
+            None => Err(orig),
         }
     }
 }
 
-impl<'a, M> CommandRunnerGuard<'a, M>
+impl<'r, M: RawMutex, T> core::ops::Deref for ReceiveSlotRef<'r, M, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.slot.deref()
+    }
+}
+
+impl<'r, M: RawMutex, T> core::ops::DerefMut for ReceiveSlotRef<'r, M, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.slot.deref_mut()
+    }
+}
+
+impl<'r, M: RawMutex, U, T> core::ops::Deref for MappedReceiveSlotRef<'r, M, U, T> {
+    type Target = U;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: data is created from the original slot ref,
+        // so it's always a referenceable ptr
+        unsafe { self.data.as_ref() }
+    }
+}
+
+impl<'r, M: RawMutex, U, T> core::ops::DerefMut for MappedReceiveSlotRef<'r, M, U, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: data is created from the original slot ref,
+        // so it's always a referenceable ptr
+        unsafe { self.data.as_mut() }
+    }
+}
+
+impl<'r, M> CommandRunner<'r, M>
 where
     M: RawMutex,
 {
+    pub fn new(
+        commands: ZerocopySender<'r, M, RawAtCommand>,
+        responses: ZerocopyReceiver<'r, M, ResponseCode>,
+    ) -> Self {
+        CommandRunner {
+            commands,
+            responses,
+            timeout: None,
+        }
+    }
+
     /// Send a request to the modem, but do not wait for a response.
     pub async fn send_request<R: AtRequest>(&mut self, request: &R) -> Result<(), TimeoutError> {
-        let command = self.runner.commands.send();
-        let command = if let Some(timeout) = self.timeout {
-            with_timeout(timeout, command).await?
+        let mut command = if let Some(timeout) = self.timeout {
+            with_timeout(timeout, self.commands.send()).await?
         } else {
-            command.await
+            self.commands.send().await
         };
-        let _ = request.encode(command);
-        self.runner.commands.send_done();
+        let _ = request.encode(&mut command.bytes);
+        command.send_done();
         Ok(())
     }
 
     /// Wait for the modem to return a specific response.
-    pub async fn expect_response<T: AtResponse + 'a>(&mut self) -> Result<&mut T, Error> {
+    pub async fn expect_response<T: AtResponse>(
+        &mut self,
+    ) -> Result<MappedReceiveSlotRef<'_, M, T, ResponseCode>, Error> {
         loop {
-            let response = self.runner.responses.receive();
+            let response = self.responses.receive();
             let response = if let Some(timeout) = self.timeout {
                 with_timeout(timeout, response).await?
             } else {
                 response.await
             };
-            if let Some(response) = response {
-                match T::from_generic(response) {
-                    Ok(response) => return Ok(response),
-                    Err(ResponseCode::Error(error)) => return Err(Error::Sim(*error)),
-                    Err(unknown_response) => {
-                        // TODO: we might want to make this a hard error, if/when we feel confident in
-                        // how both the driver and the modem behaves
-                        log::warn!("Got unexpected ATResponse: {:?}", unknown_response)
+            let response = ReceiveSlotRef::new(response);
+            match ReceiveSlotRef::filter_map(response, |response| T::from_generic(response)) {
+                Ok(response) => return Ok(response),
+                Err(err) => {
+                    match &*err {
+                        ResponseCode::Error(error) => return Err(Error::Sim(*error)),
+                        unknown_response => {
+                            // TODO: we might want to make this a hard error, if/when we feel confident in
+                            // how both the driver and the modem behaves
+                            log::warn!("Got unexpected ATResponse: {:?}", unknown_response)
+                        }
                     }
                 }
             }
-            self.runner.responses.receive_done();
         }
     }
 
     /// Send raw bytes to the modem, use with care.
-    pub async fn send_bytes(&mut self, mut bytes: &[u8]) {
+    pub async fn send_bytes(&mut self, bytes: &[u8]) {
+        let mut bytes = bytes;
         while !bytes.is_empty() {
-            let chunk = self.runner.commands.send().await;
-            chunk.clear();
+            let mut chunk = self.commands.send().await;
             let n = min(chunk.capacity(), bytes.len());
             let _ = chunk.extend(&bytes[..n]);
             bytes = &bytes[n..];
-            self.runner.commands.send_done();
         }
     }
 
@@ -229,7 +300,7 @@ where
 }
 
 pub struct ResponseGuard<'a, 'r, M: RawMutex> {
-    responses: RefMut<'r, Receiver<'a, M, Option<ResponseCode>>>,
+    responses: RefMut<'r, Receiver<'a, M, Option<ResponseCode>, 1>>,
 }
 
 /// Implemented for (tuples of) AtResponse.
@@ -237,36 +308,33 @@ pub struct ResponseGuard<'a, 'r, M: RawMutex> {
 /// In order to support AtRequest::Response being a tuple of arbitrary size, we
 /// implement the ExpectResponse trait for tuples with as many member as we need.
 pub trait ExpectResponse<M: RawMutex>: Sized {
-    fn expect(runner: &mut CommandRunnerGuard<'_, M>) -> impl Future<Output = Result<Self, Error>>;
+    fn expect(runner: &mut CommandRunner<'_, M>) -> impl Future<Output = Result<Self, Error>>;
 }
 
-impl<T: AtResponse + Clone + 'static, M: RawMutex> ExpectResponse<M> for T {
-    async fn expect(runner: &mut CommandRunnerGuard<'_, M>) -> Result<Self, Error> {
-        runner.expect_response().await.cloned()
+impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        runner
+            .expect_response::<Self>()
+            .await
+            .map(|response| response.clone())
     }
 }
 
-impl<T: AtResponse + Clone + 'static, Y: AtResponse + Clone + 'static, M: RawMutex>
-    ExpectResponse<M> for (T, Y)
-{
-    async fn expect(runner: &mut CommandRunnerGuard<'_, M>) -> Result<Self, Error> {
-        let r1 = runner.expect_response().await.cloned()?;
-        let r2 = runner.expect_response().await.cloned()?;
+impl<T: AtResponse + Clone, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for (T, Y) {
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        let r1 = <T as ExpectResponse<M>>::expect(runner).await?;
+        let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
         Ok((r1, r2))
     }
 }
 
-impl<
-    T: AtResponse + Clone + 'static,
-    Y: AtResponse + Clone + 'static,
-    Z: AtResponse + Clone + 'static,
-    M: RawMutex,
-> ExpectResponse<M> for (T, Y, Z)
+impl<T: AtResponse + Clone, Y: AtResponse + Clone, Z: AtResponse + Clone, M: RawMutex>
+    ExpectResponse<M> for (T, Y, Z)
 {
-    async fn expect(runner: &mut CommandRunnerGuard<'_, M>) -> Result<Self, Error> {
-        let r1 = runner.expect_response().await.cloned()?;
-        let r2 = runner.expect_response().await.cloned()?;
-        let r3 = runner.expect_response().await.cloned()?;
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        let r1 = <T as ExpectResponse<M>>::expect(runner).await?;
+        let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
+        let r3 = <Z as ExpectResponse<M>>::expect(runner).await?;
         Ok((r1, r2, r3))
     }
 }

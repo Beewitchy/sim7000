@@ -16,7 +16,7 @@ impl AtRequest for GetLocalIpExt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IpExt {
     pub addr: [u8; 4],
@@ -35,10 +35,10 @@ impl AtParseLine for IpExt {
 }
 
 impl AtResponse for IpExt {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::IpExt(ip_ext) => Ok(ip_ext),
-            _ => Err(code),
+            ResponseCode::IpExt(ip_ext) => Some(ip_ext),
+            _ => None,
         }
     }
 }

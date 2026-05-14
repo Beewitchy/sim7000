@@ -16,6 +16,9 @@ pub enum Error {
     NoApn,
     Httptofs(StatusCode),
     Xtra(Xtra),
+
+    /// Context isn't fully initialized
+    InvalidContext
 }
 
 #[derive(Debug)]
@@ -44,6 +47,7 @@ impl embedded_io_async::Error for Error {
             Error::NoApn => embedded_io_async::ErrorKind::Other,
             Error::Httptofs(_) => embedded_io_async::ErrorKind::Other,
             Error::Xtra(_) => embedded_io_async::ErrorKind::Other,
+            Error::InvalidContext => embedded_io_async::ErrorKind::InvalidInput,
         }
     }
 }

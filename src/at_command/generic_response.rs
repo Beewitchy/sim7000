@@ -17,7 +17,7 @@ pub enum SimError {
     CmsErr { code: u32 },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WritePrompt;
 
@@ -37,10 +37,10 @@ impl AtParseLine for GenericOk {
 }
 
 impl AtResponse for GenericOk {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::Ok(ok) => Ok(ok),
-            _ => Err(code),
+            ResponseCode::Ok(ok) => Some(ok),
+            _ => None,
         }
     }
 }
@@ -72,10 +72,10 @@ impl AtParseLine for WritePrompt {
 }
 
 impl AtResponse for WritePrompt {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::WritePrompt(prompt) => Ok(prompt),
-            _ => Err(code),
+            ResponseCode::WritePrompt(prompt) => Some(prompt),
+            _ => None,
         }
     }
 }
@@ -92,10 +92,10 @@ impl AtParseLine for CloseOk {
 }
 
 impl AtResponse for CloseOk {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::CloseOk(close_ok) => Ok(close_ok),
-            _ => Err(code),
+            ResponseCode::CloseOk(close_ok) => Some(close_ok),
+            _ => None,
         }
     }
 }

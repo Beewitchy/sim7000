@@ -38,7 +38,7 @@ impl AtRequest for DownloadToFileSystem {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DownloadInfo {
     pub status_code: StatusCode,
@@ -89,10 +89,10 @@ impl AtParseLine for DownloadInfo {
 }
 
 impl AtResponse for DownloadInfo {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::DownloadInfo(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::DownloadInfo(v) => Some(v),
+            _ => None,
         }
     }
 }

@@ -33,9 +33,9 @@ use crate::{
     tcp::{ConnectError, TcpStream},
     voltage::VoltageWarner,
 };
-pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, CommandRunnerGuard, RawAtCommand};
+pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, RawAtCommand};
 pub use context::*;
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Receiver, signal::Signal};
+use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::{Mutex, MutexGuard}, channel::Receiver, signal::Signal};
 use embassy_time::{Duration, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
@@ -47,10 +47,10 @@ pub struct Disabled;
 pub struct Enabled;
 pub struct Sleeping;
 
-pub struct Modem<'c, P, M: RawMutex + 'static> {
-    context: &'c ModemContext<M>,
+pub struct Modem<'m, 'c, P, M: RawMutex, const N: usize> {
+    context: &'m Shared<M, N>,
     power_signal: PowerSignalBroadcaster<'c>,
-    commands: CommandRunner<'c, M>,
+    commands: Mutex<M, CommandRunner<'m, M>>,
     power: P,
     apn: Option<heapless::String<63>>,
     ap_username: &'static str,
@@ -97,40 +97,28 @@ macro_rules! try_retry {
     }};
 }
 
-impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
+impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P, M, TCP_SLOTS> {
     pub async fn new<I: BuildIo>(
         io: I,
         power: P,
-        context: &'c ModemContext<M>,
+        context: &'m mut ModemContext<'c, M, TCP_SLOTS>,
     ) -> Result<
         (
-            Modem<'c, P, M>,
-            RawIoPump<'c, I, M>,
-            TxPump<'c, M>,
-            RxPump<'c, M>,
-            DropPump<'c, M>,
+            Modem<'m, 'c, P, M, TCP_SLOTS>,
+            RawIoPump<'m, I, M>,
+            TxPump<'m, M>,
+            RxPump<'m, M, TCP_SLOTS>,
+            DropPump<'m, M, TCP_SLOTS>,
         ),
         Error,
     > {
-        let (command_sender, command_receiver) = context
-            .commands
-            .get_mut_or_init(|| {
-                Channel::new(&mut [
-                    RawAtCommand::new(),
-                    RawAtCommand::new(),
-                    RawAtCommand::new(),
-                    RawAtCommand::new(),
-                ])
-            })
-            .split();
-        let (response_sender, respose_receiver) = ctx
-            .generic_response
-            .get_mut_or_init(|| Channel::new(&mut [None]))
-            .split();
+        let (commands_sender, commands_receiver) = context.packet_channels.commands.split();
+        let (response_sender, response_receiver) = context.packet_channels.generic_response.split();
+        let commands = Mutex::new(CommandRunner::new(commands_sender, response_receiver));
         let modem = Modem {
-            commands: context.commands(),
-            power_signal: context.power_signal.publisher(),
-            context,
+            commands,
+            power_signal: context.shared.power_signal.publisher(),
+            context: &context.shared,
             power,
             apn: None,
             ap_username: "",
@@ -155,30 +143,31 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
 
         let io_pump = RawIoPump {
             io,
-            rx: &context.rx_pipe,
-            tx: &context.tx_pipe,
+            rx: &context.shared.rx_pipe,
+            tx: &context.shared.tx_pipe,
             power_state: PowerState::Off,
-            power_signal: context.power_signal.subscribe(),
+            power_signal: context.shared.power_signal.subscribe(),
         };
 
         let rx_pump = RxPump {
-            reader: ModemReader::new(&context.rx_pipe),
-            generic_response: context.generic_response.sender(),
-            registration_events: &context.registration_events,
-            tcp: &context.tcp,
-            gnss: context.gnss_slot.peek(),
-            voltage_warning: context.voltage_slot.peek(),
-            sms_indices: context.sms_indices.sender(),
+            reader: ModemReader::new(&context.shared.rx_pipe),
+            generic_response: response_sender,
+            registration_events: &context.shared.registration_events,
+            tcp: &context.shared.tcp,
+            gnss: context.shared.gnss_slot.peek(),
+            voltage_warning: context.shared.voltage_slot.peek(),
+            sms_indices: context.shared.sms_indices.sender(),
         };
 
         let tx_pump = TxPump {
-            writer: &context.tx_pipe,
-            commands: context.commands.receiver(),
+            writer: &context.shared.tx_pipe,
+            commands: commands_receiver,
         };
 
         let drop_pump = DropPump {
-            context,
-            power_signal: context.power_signal.subscribe(),
+            context: &context.shared,
+            commands: &modem.commands,
+            power_signal: context.shared.power_signal.subscribe(),
             power_state: PowerState::Off,
         };
 
@@ -192,7 +181,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         self.power_signal.broadcast(PowerState::On);
 
-        let commands = self.commands.lock().await;
+        let mut commands = self.commands.lock().await;
 
         let set_flow_control = ifc::SetFlowControl {
             dce_by_dte: FlowControl::Hardware,
@@ -345,7 +334,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         )?;
 
         if self.automatic_registration {
-            let active_mode = self.automatic_registration(&commands).await?;
+            let active_mode = self.automatic_registration(&mut commands).await?;
 
             // re-order the priority list
             if let Some(index) = self
@@ -413,7 +402,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     /// Returns which technology ends up being used, or a timeout error
     async fn automatic_registration(
         &self,
-        commands: &CommandRunnerGuard<'_>,
+        commands: &mut CommandRunner<'_, M>,
     ) -> Result<RadioAccessTechnology, Error> {
         for mode in &self.current_network_priority {
             match mode {
@@ -504,12 +493,12 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         }
     }
 
-    pub async fn get_sms_stream(&mut self) -> (SmsStream<'c, M>, SmsSignal<'c, M>) {
+    pub async fn get_sms_stream(&mut self) -> (SmsStream<'m, 'c, M>, SmsSignal<'c, M>) {
         let sms_indicies = self.context.sms_indices.receiver();
         (
             SmsStream {
                 sms_indicies,
-                commands: self.context.commands(),
+                commands: &self.commands,
                 // state: &self.context.sms_state,
             },
             SmsSignal {
@@ -518,7 +507,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         )
     }
     pub async fn send_sms(&mut self, destination: &str, message: &str) -> Result<(), Error> {
-        let commands = self.commands.lock().await;
+        let mut commands = self.commands.lock().await;
         commands
             .run(cmgs::SendSms {
                 destination: destination.try_into().unwrap_or_default(),
@@ -535,7 +524,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
             with_timeout(Duration::from_secs(1), self.context.sms_indices.receive()).await?;
         log::info!("Reading SMS at index: {:?}", index);
 
-        let commands = self.commands.lock().await;
+        let mut commands = self.commands.lock().await;
         let (sms, _) = commands.run(ReadSms { index: index.index }).await?;
         if let Err(e) = commands
             .run(DeleteSms(DeleteFlag::Index(index.index)))
@@ -551,7 +540,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         &mut self,
         host: &str,
         port: u16,
-    ) -> Result<TcpStream<'c>, ConnectError> {
+    ) -> Result<TcpStream<'c, M>, ConnectError> {
         let tcp_context = self.context.tcp.claim().ok_or(ConnectError::NoFreeSlots)?;
 
         TcpStream::connect(
@@ -559,12 +548,12 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
             host,
             port,
             &self.context.drop_channel,
-            self.context.commands(),
+            &self.commands,
         )
         .await
     }
 
-    pub async fn claim_gnss(&mut self) -> Result<Option<Gnss<'c>>, Error> {
+    pub async fn claim_gnss(&mut self) -> Result<Option<Gnss<'c, M>>, Error> {
         let Some(reports) = self.context.gnss_slot.claim() else {
             return Ok(None);
         };
@@ -606,7 +595,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     pub async fn sync_ntp(&mut self, ntp_server: &str, timezone: u16) -> Result<(), Error> {
         let apn = self.apn.as_ref().ok_or(Error::NoApn)?.clone();
 
-        let commands = self.commands.lock().await;
+        let mut commands = self.commands.lock().await;
 
         commands
             .run(BearerSettings {
@@ -699,7 +688,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
         Ok(())
     }
 
-    pub async fn claim_voltage_warner(&mut self) -> Option<VoltageWarner<'c>> {
+    pub async fn claim_voltage_warner(&mut self) -> Option<VoltageWarner<'c, M>> {
         VoltageWarner::take(&self.context.voltage_slot)
     }
 
@@ -707,7 +696,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     pub async fn run_command<C, Response>(&self, command: C) -> Result<Response, Error>
     where
         C: AtRequest<Response = Response>,
-        Response: ExpectResponse,
+        Response: ExpectResponse<M>,
     {
         self.commands.lock().await.run(command).await
     }
@@ -720,7 +709,7 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     ) -> Result<Response, Error>
     where
         C: AtRequest<Response = Response>,
-        Response: ExpectResponse,
+        Response: ExpectResponse<M>,
     {
         self.commands
             .lock()
@@ -779,9 +768,9 @@ impl<'c, P: ModemPower, M: RawMutex + 'static> Modem<'c, P, M> {
     }
 }
 
-pub struct SmsStream<'a, M: RawMutex> {
+pub struct SmsStream<'a, 'c, M: RawMutex> {
     sms_indicies: Receiver<'a, M, NewSmsIndex, 5>,
-    commands: CommandRunner<'a, M>,
+    commands: &'a Mutex<M, CommandRunner<'c, M>>,
     // state: &'a Signal<CriticalSectionRawMutex, SmsState>,
 }
 
@@ -789,7 +778,7 @@ pub struct SmsSignal<'a, M: RawMutex> {
     inner: &'a Signal<M, SmsState>,
 }
 
-impl<M> SmsSignal<'_, M> {
+impl<M: RawMutex> SmsSignal<'_, M> {
     pub async fn wait_for_available(&self) {
         loop {
             let state = self.inner.wait().await;
@@ -814,12 +803,12 @@ pub(crate) enum SmsState {
     Unavailable,
 }
 
-impl<M> SmsStream<'_, M> {
+impl<M: RawMutex> SmsStream<'_, '_, M> {
     pub async fn read_sms(&mut self) -> Result<SmsMessage, Error> {
         let index = with_timeout(Duration::from_secs(1), self.sms_indicies.receive()).await?;
         log::info!("Reading SMS at index: {:?}", index);
 
-        let commands = self.commands.lock().await;
+        let mut commands = self.commands.lock().await;
         let (sms, _) = commands.run(ReadSms { index: index.index }).await?;
 
         if index.index > 8 {

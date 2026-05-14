@@ -9,7 +9,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssColdStart;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum XtraStatus {
     Success = 0,
@@ -50,10 +50,10 @@ impl AtParseLine for XtraStatus {
 }
 
 impl AtResponse for XtraStatus {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::XtraStatus(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::XtraStatus(v) => Some(v),
+            _ => None,
         }
     }
 }

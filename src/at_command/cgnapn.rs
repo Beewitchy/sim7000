@@ -13,7 +13,7 @@ pub struct GetNetworkApn;
 ///
 /// `apn` will be [None] if the network did not send us an APN,
 /// or if we're not in CatM or NbIot mode.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkApn {
     // The maximum length of an APN is 63 octets (bytes)
@@ -49,10 +49,10 @@ impl AtParseLine for NetworkApn {
 }
 
 impl AtResponse for NetworkApn {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::NetworkApn(v) => Ok(v),
-            _ => Err(code),
+            ResponseCode::NetworkApn(v) => Some(v),
+            _ => None,
         }
     }
 }

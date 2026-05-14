@@ -9,7 +9,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GetOperatorInfo;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OperatorInfo {
     pub mode: OperatorMode,
@@ -18,7 +18,7 @@ pub struct OperatorInfo {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OperatorMode {
     Automatic = 0,
@@ -28,7 +28,7 @@ pub enum OperatorMode {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OperatorFormat {
     Long = 0,
@@ -78,10 +78,10 @@ impl AtParseLine for OperatorInfo {
 }
 
 impl AtResponse for OperatorInfo {
-    fn from_generic(code: &mut ResponseCode) -> Result<&mut Self, &mut ResponseCode> {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
-            ResponseCode::OperatorInfo(info) => Ok(info),
-            _ => Err(code),
+            ResponseCode::OperatorInfo(info) => Some(info),
+            _ => None,
         }
     }
 }
