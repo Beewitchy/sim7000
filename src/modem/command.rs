@@ -206,6 +206,7 @@ where
         } else {
             self.commands.send().await
         };
+        command.clear();
         let _ = request.encode(&mut command.bytes);
         command.send_done();
         Ok(())
