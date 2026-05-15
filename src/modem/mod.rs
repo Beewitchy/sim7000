@@ -98,7 +98,7 @@ macro_rules! try_retry {
 }
 
 impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP_SLOTS> {
-    pub async fn new<'c, I: BuildIo>(
+    pub fn new<'c, I: BuildIo>(
         io: I,
         power: P,
         context: &'m mut ModemContext<'c, M, TCP_SLOTS>,
