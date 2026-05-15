@@ -172,49 +172,6 @@ impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
     }
 }
 
-pub struct DropPump<'pump, 'modem, M: RawMutex, const TCP_SLOTS: usize> {
-    pub(crate) context: &'pump Shared<M, TCP_SLOTS>,
-    pub(crate) commands: &'pump Mutex<M, CommandRunner<'modem, M>>,
-    pub(crate) power_signal: PowerSignalListener<'pump, M>,
-    pub(crate) power_state: PowerState,
-}
-
-impl<'pump, 'modem, M, const TCP_SLOTS: usize> Pump for DropPump<'pump, 'modem, M, TCP_SLOTS> where M: RawMutex {
-    type Err = Error;
-
-    async fn pump(&mut self) -> Result<(), Self::Err> {
-        select_biased! {
-            power_state = self.power_signal.listen().fuse() => {
-                self.power_state = power_state;
-            }
-            drop_message = self.context.drop_channel.receive().fuse() => {
-                if self.power_state == PowerState::On {
-                    // run drop command, abort if power state changes
-                    let result = select_biased! {
-                        power_state = self.power_signal.listen().fuse() => {
-                            self.power_state = power_state;
-                            Ok(())
-                        }
-                        result = async {
-                            // run drop command
-                            let mut runner = self.commands.lock().await;
-                            drop_message.run(&mut runner).await
-                        }.fuse() => result,
-                    };
-
-                    // clean up regardless of whether drop command succeeded
-                    drop_message.clean_up(self.context);
-                    result?;
-                } else {
-                    drop_message.clean_up(self.context);
-                }
-            },
-        }
-
-        Ok(())
-    }
-}
-
 pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) io: RW,
     /// sends data to the rx pump

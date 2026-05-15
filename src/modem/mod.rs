@@ -28,14 +28,16 @@ use crate::{
     },
     gnss::Gnss,
     log,
-    pump::{DropPump, RawIoPump, RxPump, TxPump},
+    pump::{RawIoPump, RxPump, TxPump},
     read::ModemReader,
     tcp::{ConnectError, TcpStream},
     voltage::VoltageWarner,
 };
 pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, RawAtCommand};
 pub use context::*;
-use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::Mutex, channel::Receiver, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
+};
 use embassy_time::{Duration, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
@@ -164,23 +166,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             commands: commands_receiver,
         };
 
-        // let drop_pump = DropPump {
-        //     context: modem.context,
-        //     commands: &modem.commands,
-        //     power_signal: modem.context.power_signal.subscribe(),
-        //     power_state: PowerState::Off,
-        // };
-
         Ok((modem, io_pump, tx_pump, rx_pump))
-    }
-
-    pub fn drop_pump(&self) -> DropPump<'_, 'm, M, TCP_SLOTS> {
-        DropPump {
-            context: self.context,
-            commands: &self.commands,
-            power_signal: self.context.power_signal.subscribe(),
-            power_state: PowerState::Off,
-        }
     }
 
     pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
@@ -261,6 +247,47 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         log::info!("modem successfully initialized, turning it back off...");
         self.deactivate().await;
+
+        Ok(())
+    }
+
+    /// Execute queued drop commands
+    ///
+    /// You should call this between dropping & re-establishing sockets in order
+    ///  to clean up state
+    pub async fn async_drop(&mut self) -> Result<(), Error> {
+        let mut power_signal = self.context.power_signal.subscribe();
+        let drop_channel = self.context.drop_channel.receiver();
+        let mut current_power_state = self.power.state();
+        while !drop_channel.is_empty() {
+            select_biased! {
+                power_state = power_signal.listen().fuse() => {
+                    current_power_state = power_state;
+                }
+                drop_message = drop_channel.receive().fuse() => {
+                    if current_power_state == PowerState::On {
+                        // run drop command, abort if power state changes
+                        let result = select_biased! {
+                            power_state = power_signal.listen().fuse() => {
+                                current_power_state = power_state;
+                                Ok(())
+                            }
+                            result = async {
+                                // run drop command
+                                let mut runner = self.commands.lock().await;
+                                drop_message.run(&mut runner).await
+                            }.fuse() => result,
+                        };
+
+                        // clean up regardless of whether drop command succeeded
+                        drop_message.clean_up(self.context);
+                        result?;
+                    } else {
+                        drop_message.clean_up(self.context);
+                    }
+                },
+            }
+        }
 
         Ok(())
     }
