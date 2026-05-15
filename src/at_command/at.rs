@@ -1,5 +1,3 @@
-use heapless::String;
-
 use super::{AtRequest, GenericOk};
 
 #[derive(Debug)]

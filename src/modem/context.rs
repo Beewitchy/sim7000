@@ -1,11 +1,10 @@
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex, mutex::Mutex, pipe::Pipe,
-    zerocopy_channel::{Channel as ZerocopyChannel, Sender as ZerocopySender, Receiver as ZerocopyReceiver}, channel::Channel,
-    signal::Signal, once_lock::OnceLock,
+    blocking_mutex::raw::RawMutex, pipe::Pipe,
+    zerocopy_channel::Channel as ZerocopyChannel, channel::Channel,
+    signal::Signal,
 };
-use core::cell::{OnceCell, RefCell};
 
-use super::{power::PowerSignal, CommandRunner, RawAtCommand, SmsState};
+use super::{power::PowerSignal, RawAtCommand, SmsState};
 use crate::{
     at_command::{
         unsolicited::{
@@ -21,8 +20,8 @@ use crate::{
     StateSignal,
 };
 
-pub type TcpRxPipe<M: RawMutex> = Pipe<M, TCP_RX_BUF_LEN>;
-pub type TcpEventChannel<M: RawMutex> = RingChannel<M, ConnectionMessage, 8>;
+pub type TcpRxPipe<M> = Pipe<M, TCP_RX_BUF_LEN>;
+pub type TcpEventChannel<M> = RingChannel<M, ConnectionMessage, 8>;
 
 pub(crate) struct PacketChannels<'c, M: RawMutex> {
     pub(crate) commands: ZerocopyChannel<'c, M, RawAtCommand>,
@@ -38,7 +37,7 @@ impl<'c, M: RawMutex> PacketChannels<'c, M> {
 }
 
 pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
-    pub(crate) power_signal: PowerSignal,
+    pub(crate) power_signal: PowerSignal<M>,
     pub(crate) drop_channel: DropChannel<M>,
     pub(crate) sms_indices: Channel<M, NewSmsIndex, 5>,
     pub(crate) sms_state: Signal<M, SmsState>,

@@ -1,5 +1,3 @@
-use heapless::String;
-
 use super::{AtRequest, GenericOk};
 
 /// ATE1 / ATE0

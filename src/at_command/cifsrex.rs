@@ -1,5 +1,3 @@
-use heapless::String;
-
 use crate::util::collect_array;
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};

@@ -11,7 +11,7 @@ use crate::{
     at_command::{at, cipsend, cipstart, unsolicited::ConnectionMessage, At},
     drop::{AsyncDrop, DropChannel, DropMessage},
     log,
-    modem::{CommandRunner, TcpToken, Modem},
+    modem::{CommandRunner, TcpToken},
     util::Lagged,
     Error,
 };
@@ -71,10 +71,10 @@ impl From<crate::Error> for ConnectError {
     }
 }
 
-pub struct TcpStream<'s, 'c, M: embassy_sync::blocking_mutex::raw::RawMutex> {
+pub struct TcpStream<'s, 'm, M: RawMutex> {
     token: TcpToken<'s, M>,
     _drop: AsyncDrop<'s, M>,
-    commands: &'s Mutex<M, CommandRunner<'c, M>>,
+    commands: &'s Mutex<M, CommandRunner<'m, M>>,
 
     /// Whether the stream is closed
     closed: AtomicBool,
@@ -184,7 +184,7 @@ impl<'s, 'c, M> TcpStream<'s, 'c, M> where M: RawMutex {
     }
 
     /// Split the stream into a reader and a writer half.
-    pub fn split(&mut self) -> (TcpReader<'_>, TcpWriter<'_>) {
+    pub fn split(&mut self) -> (TcpReader<'_, 'c, M>, TcpWriter<'_, 'c, M>) {
         let reader = TcpReader { stream: self };
         let writer = TcpWriter { stream: self };
         (reader, writer)
@@ -211,7 +211,7 @@ impl<'s, 'c, M> TcpStream<'s, 'c, M> where M: RawMutex {
     }
 }
 
-impl Write for TcpStream<'_> {
+impl<M: RawMutex> Write for TcpStream<'_, '_, M> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         let (_, mut writer) = self.split();
         writer.write(buf).await
@@ -223,14 +223,14 @@ impl Write for TcpStream<'_> {
     }
 }
 
-impl Read for TcpStream<'_> {
+impl<M: RawMutex> Read for TcpStream<'_, '_, M> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let (mut reader, _) = self.split();
         reader.read(buf).await
     }
 }
 
-impl Write for TcpWriter<'_> {
+impl<M: RawMutex> Write for TcpWriter<'_, '_, M> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         let stream = self.stream;
         let mut events = stream
@@ -248,7 +248,7 @@ impl Write for TcpWriter<'_> {
                 return Err(TcpError::Closed);
             }
 
-            let commands = stream.commands.lock().await;
+            let mut commands = stream.commands.lock().await;
 
             commands
                 .run(cipsend::IpSend {
@@ -290,7 +290,7 @@ impl Write for TcpWriter<'_> {
     }
 }
 
-impl Read for TcpReader<'_> {
+impl<M: RawMutex> Read for TcpReader<'_, '_, M> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let stream = self.stream;
 
@@ -329,7 +329,7 @@ impl Read for TcpReader<'_> {
                     }
                 }
                 _ = Timer::after(self.stream.timeout).fuse() => {
-                    let commands = self.stream.commands.lock().await;
+                    let mut commands = self.stream.commands.lock().await;
 
                     // make sure the modem is still alive
                     if commands.run(At).await.is_err() {

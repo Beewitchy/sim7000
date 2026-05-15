@@ -1,5 +1,4 @@
 use core::{
-    cell::{RefCell, RefMut},
     cmp::min,
     future::Future,
     marker::PhantomData,
@@ -7,10 +6,8 @@ use core::{
 };
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    channel::{Channel, Receiver, Sender},
-    mutex::{MappedMutexGuard, Mutex, MutexGuard},
     zerocopy_channel::{
-        Channel as ZerocopyChannel, ReceiveSlot, Receiver as ZerocopyReceiver,
+        ReceiveSlot, Receiver as ZerocopyReceiver,
         Sender as ZerocopySender,
     },
 };
@@ -20,7 +17,6 @@ use heapless::{String, Vec};
 use crate::Error;
 use crate::at_command::{AtRequest, AtResponse, ResponseCode};
 use crate::log;
-use crate::modem::{ModemContext, PacketChannels};
 
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -115,7 +111,7 @@ pub struct ReceiveSlotRef<'r, M: RawMutex, T> {
 
 pub struct MappedReceiveSlotRef<'r, M: RawMutex, U, T> {
     data: core::ptr::NonNull<U>,
-    orig: ReceiveSlotRef<'r, M, T>,
+    _orig: ReceiveSlotRef<'r, M, T>,
     _variance: PhantomData<&'r mut T>,
 }
 
@@ -147,7 +143,7 @@ impl<'r, M: RawMutex, T> ReceiveSlotRef<'r, M, T> {
                 let data = core::ptr::NonNull::from(data);
                 Ok(MappedReceiveSlotRef {
                     data,
-                    orig,
+                    _orig: orig,
                     _variance: PhantomData,
                 })
             }
@@ -297,10 +293,6 @@ where
     pub fn with_timeout(self, timeout: Option<Duration>) -> Self {
         Self { timeout, ..self }
     }
-}
-
-pub struct ResponseGuard<'a, 'r, M: RawMutex> {
-    responses: RefMut<'r, Receiver<'a, M, Option<ResponseCode>, 1>>,
 }
 
 /// Implemented for (tuples of) AtResponse.

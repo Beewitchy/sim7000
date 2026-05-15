@@ -35,7 +35,7 @@ use crate::{
 };
 pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, RawAtCommand};
 pub use context::*;
-use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::{Mutex, MutexGuard}, channel::Receiver, signal::Signal};
+use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::Mutex, channel::Receiver, signal::Signal};
 use embassy_time::{Duration, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
@@ -47,9 +47,9 @@ pub struct Disabled;
 pub struct Enabled;
 pub struct Sleeping;
 
-pub struct Modem<'m, 'c, P, M: RawMutex, const N: usize> {
+pub struct Modem<'m, P, M: RawMutex, const N: usize> {
     context: &'m Shared<M, N>,
-    power_signal: PowerSignalBroadcaster<'c>,
+    power_signal: PowerSignalBroadcaster<'m>,
     commands: Mutex<M, CommandRunner<'m, M>>,
     power: P,
     apn: Option<heapless::String<63>>,
@@ -97,18 +97,18 @@ macro_rules! try_retry {
     }};
 }
 
-impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P, M, TCP_SLOTS> {
-    pub async fn new<I: BuildIo>(
+impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP_SLOTS> {
+    pub async fn new<'c, I: BuildIo>(
         io: I,
         power: P,
         context: &'m mut ModemContext<'c, M, TCP_SLOTS>,
     ) -> Result<
         (
-            Modem<'m, 'c, P, M, TCP_SLOTS>,
+            Modem<'m, P, M, TCP_SLOTS>,
             RawIoPump<'m, I, M>,
             TxPump<'m, M>,
             RxPump<'m, M, TCP_SLOTS>,
-            DropPump<'m, M, TCP_SLOTS>,
+            // DropPump<'m, 'm, M, TCP_SLOTS>,
         ),
         Error,
     > {
@@ -164,14 +164,23 @@ impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P
             commands: commands_receiver,
         };
 
-        let drop_pump = DropPump {
-            context: &context.shared,
-            commands: &modem.commands,
-            power_signal: context.shared.power_signal.subscribe(),
-            power_state: PowerState::Off,
-        };
+        // let drop_pump = DropPump {
+        //     context: modem.context,
+        //     commands: &modem.commands,
+        //     power_signal: modem.context.power_signal.subscribe(),
+        //     power_state: PowerState::Off,
+        // };
 
-        Ok((modem, io_pump, tx_pump, rx_pump, drop_pump))
+        Ok((modem, io_pump, tx_pump, rx_pump))
+    }
+
+    pub fn drop_pump(&self) -> DropPump<'_, 'm, M, TCP_SLOTS> {
+        DropPump {
+            context: self.context,
+            commands: &self.commands,
+            power_signal: self.context.power_signal.subscribe(),
+            power_state: PowerState::Off,
+        }
     }
 
     pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
@@ -493,7 +502,7 @@ impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P
         }
     }
 
-    pub async fn get_sms_stream(&mut self) -> (SmsStream<'m, 'c, M>, SmsSignal<'c, M>) {
+    pub async fn get_sms_stream(&mut self) -> (SmsStream<'_, 'm, M>, SmsSignal<'m, M>) {
         let sms_indicies = self.context.sms_indices.receiver();
         (
             SmsStream {
@@ -540,7 +549,7 @@ impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P
         &mut self,
         host: &str,
         port: u16,
-    ) -> Result<TcpStream<'c, M>, ConnectError> {
+    ) -> Result<TcpStream<'_, 'm, M>, ConnectError> {
         let tcp_context = self.context.tcp.claim().ok_or(ConnectError::NoFreeSlots)?;
 
         TcpStream::connect(
@@ -553,7 +562,7 @@ impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P
         .await
     }
 
-    pub async fn claim_gnss(&mut self) -> Result<Option<Gnss<'c, M>>, Error> {
+    pub async fn claim_gnss(&mut self) -> Result<Option<Gnss<'m, M>>, Error> {
         let Some(reports) = self.context.gnss_slot.claim() else {
             return Ok(None);
         };
@@ -688,7 +697,7 @@ impl<'m, 'c, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, 'c, P
         Ok(())
     }
 
-    pub async fn claim_voltage_warner(&mut self) -> Option<VoltageWarner<'c, M>> {
+    pub async fn claim_voltage_warner(&mut self) -> Option<VoltageWarner<'_, M>> {
         VoltageWarner::take(&self.context.voltage_slot)
     }
 

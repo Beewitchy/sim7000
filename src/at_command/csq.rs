@@ -1,5 +1,3 @@
-use heapless::String;
-
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CSQ

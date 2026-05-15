@@ -19,20 +19,19 @@
 //! ```
 
 use core::mem::drop;
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::{Channel, Receiver}, mutex::MutexGuard, signal::Signal};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::{Channel}};
 
-use crate::{at_command::{CloseConnection, SetGnssPower, unsolicited::GnssReport}, slot::Slot};
+use crate::at_command::{CloseConnection, SetGnssPower};
 use crate::gnss::GNSS_SLOTS;
 use crate::log;
-use crate::modem::{CommandRunner, Shared, TcpContext};
+use crate::modem::{CommandRunner, Shared};
 use crate::tcp::MAX_TCP_SLOTS;
 use crate::Error;
 
 /// The capacity of the drop channel.
 /// Nust be at least the number of unique objects that can be dropped.
 const DROP_CAPACITY: usize = GNSS_SLOTS + MAX_TCP_SLOTS;
-pub type DropChannel<M: RawMutex> = Channel<M, DropMessage, DROP_CAPACITY>;
-pub type DropReceiver<'r, M: RawMutex> = Receiver<'r, M, DropMessage, DROP_CAPACITY>;
+pub type DropChannel<M> = Channel<M, DropMessage, DROP_CAPACITY>;
 
 /// Type for facilitating asynchronous dropping. See module-level docs for details.
 pub struct AsyncDrop<'c, M: RawMutex> {

@@ -1,6 +1,3 @@
-use core::fmt::Write;
-use heapless::String;
-
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CMGF=...

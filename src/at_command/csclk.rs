@@ -1,5 +1,3 @@
-use heapless::String;
-
 use super::{AtRequest, GenericOk};
 
 /// AT+CSCLK=<1 or 0>

@@ -7,7 +7,7 @@ use embassy_futures::select::{select3, Either3};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
     mutex::Mutex,
-    channel::{Receiver, Sender},
+    channel::Sender,
     zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
     pipe::Pipe,
     signal::Signal,
@@ -25,7 +25,6 @@ use crate::at_command::{
 };
 use crate::log;
 use crate::modem::{Shared, RawAtCommand, TcpContext, CommandRunner};
-use crate::drop::DropReceiver;
 use crate::read::ModemReader;
 use crate::Error;
 
@@ -172,14 +171,14 @@ impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
     }
 }
 
-pub struct DropPump<'pump, M: RawMutex, const TCP_SLOTS: usize> {
+pub struct DropPump<'pump, 'modem, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) context: &'pump Shared<M, TCP_SLOTS>,
-    pub(crate) commands: &'pump Mutex<M, CommandRunner<'pump, M>>,
-    pub(crate) power_signal: PowerSignalListener<'pump>,
+    pub(crate) commands: &'pump Mutex<M, CommandRunner<'modem, M>>,
+    pub(crate) power_signal: PowerSignalListener<'pump, M>,
     pub(crate) power_state: PowerState,
 }
 
-impl<'pump, M, const TCP_SLOTS: usize> Pump for DropPump<'pump, M, TCP_SLOTS> where M: RawMutex {
+impl<'pump, 'modem, M, const TCP_SLOTS: usize> Pump for DropPump<'pump, 'modem, M, TCP_SLOTS> where M: RawMutex {
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -221,7 +220,7 @@ pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) rx: &'context Pipe<M, 2048>,
     /// reads data from the tx pump
     pub(crate) tx: &'context Pipe<M, 2048>,
-    pub(crate) power_signal: PowerSignalListener<'context>,
+    pub(crate) power_signal: PowerSignalListener<'context, M>,
     pub(crate) power_state: PowerState,
 }
 

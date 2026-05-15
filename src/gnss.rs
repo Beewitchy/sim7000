@@ -19,7 +19,7 @@ pub struct Gnss<'c, M: RawMutex> {
     ///
     /// A value of None indicates that the modem will not send any more reports.
     reports: Option<&'c Signal<M, GnssReport>>,
-    power_signal: PowerSignalListener<'c>,
+    power_signal: PowerSignalListener<'c, M>,
     _drop: AsyncDrop<'c, M>,
 
     /// The timeout value for waiting for a report.
@@ -29,7 +29,7 @@ pub struct Gnss<'c, M: RawMutex> {
 impl<'c, M> Gnss<'c, M> where M: RawMutex {
     pub(crate) fn new(
         reports: &'c Signal<M, GnssReport>,
-        power_signal: PowerSignalListener<'c>,
+        power_signal: PowerSignalListener<'c, M>,
         drop_channel: &'c DropChannel<M>,
         timeout: Duration,
     ) -> Self {

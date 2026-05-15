@@ -1,5 +1,5 @@
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
+    blocking_mutex::raw::RawMutex,
     pubsub::{DynImmediatePublisher, PubSubBehavior, PubSubChannel, Subscriber},
 };
 
@@ -16,8 +16,8 @@ pub const POWER_SIGNAL_LISTENERS: usize = 12;
 /// A PubSub channel for signaling changes in modem power state.
 ///
 /// Make sure that POWER_SIGNAL_LISTENERS is high enough to accomodate your needs.
-pub struct PowerSignal {
-    channel: PubSubChannel<CriticalSectionRawMutex, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
+pub struct PowerSignal<M: RawMutex> {
+    channel: PubSubChannel<M, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
 }
 
 pub struct PowerSignalBroadcaster<'a> {
@@ -25,18 +25,18 @@ pub struct PowerSignalBroadcaster<'a> {
     last: PowerState,
 }
 
-pub struct PowerSignalListener<'a> {
-    listener: Subscriber<'a, CriticalSectionRawMutex, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
+pub struct PowerSignalListener<'a, M: RawMutex> {
+    listener: Subscriber<'a, M, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
 }
 
-impl PowerSignal {
+impl<M: RawMutex> PowerSignal<M> {
     pub const fn new() -> Self {
         Self {
             channel: PubSubChannel::new(),
         }
     }
 
-    pub fn subscribe(&self) -> PowerSignalListener<'_> {
+    pub fn subscribe(&self) -> PowerSignalListener<'_, M> {
         PowerSignalListener {
             listener: self
                 .channel
@@ -66,7 +66,7 @@ impl PowerSignalBroadcaster<'_> {
     }
 }
 
-impl PowerSignalListener<'_> {
+impl<M: RawMutex> PowerSignalListener<'_, M> {
     pub async fn wait_for(&mut self, state: PowerState) {
         while self.listen().await != state {}
     }

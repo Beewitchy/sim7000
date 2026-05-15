@@ -1,6 +1,3 @@
-use core::fmt::Write;
-use heapless::String;
-
 use super::{AtRequest, GenericOk};
 
 #[repr(u32)]
