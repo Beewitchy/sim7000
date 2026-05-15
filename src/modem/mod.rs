@@ -110,7 +110,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             RawIoPump<'m, I, M>,
             TxPump<'m, M>,
             RxPump<'m, M, TCP_SLOTS>,
-            // DropPump<'m, 'm, M, TCP_SLOTS>,
         ),
         Error,
     > {

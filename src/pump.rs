@@ -6,7 +6,6 @@ use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    mutex::Mutex,
     channel::Sender,
     zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
     pipe::Pipe,
@@ -14,7 +13,6 @@ use embassy_sync::{
 };
 use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
-use futures::{select_biased, FutureExt};
 use heapless::Vec;
 
 use crate::at_command::{
@@ -24,7 +22,7 @@ use crate::at_command::{
     AtParseLine, ResponseCode,
 };
 use crate::log;
-use crate::modem::{Shared, RawAtCommand, TcpContext, CommandRunner};
+use crate::modem::{RawAtCommand, TcpContext};
 use crate::read::ModemReader;
 use crate::Error;
 
@@ -167,6 +165,8 @@ impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
         // `Writer` is infallible. It is fine to ignore these errors.
         let _ = self.writer.write_all(command.as_bytes()).await;
         let _ = self.writer.flush().await;
+
+        command.receive_done();
 
         Ok(())
     }
