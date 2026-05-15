@@ -156,9 +156,10 @@ impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
     async fn pump(&mut self) -> Result<(), Self::Err> {
         let command = self.commands.receive().await;
         #[cfg(feature = "defmt")]
-        match &command {
-            RawAtCommand { bytes, binary: false } => log::trace!("Write to modem: {=[u8]:str}", bytes.as_slice()),
-            RawAtCommand { bytes, binary: true } => log::trace!("Write to modem: {=[u8]}", bytes.as_slice()),
+        if command.binary {
+            log::trace!("Write to modem: {=[u8]:x}", command.bytes.as_slice());
+        } else {
+            log::trace!("Write to modem: {=[u8]:a}", command.bytes.as_slice());
         }
         #[cfg(not(feature = "defmt"))]
         log::trace!("Write to modem: {:?}", command.as_bytes());
