@@ -48,6 +48,7 @@ pub mod cnmp;
 pub mod cntp;
 pub mod cntpcid;
 pub mod cops;
+pub mod cpin;
 pub mod cpowd;
 pub mod cpsi;
 pub mod creg;
@@ -95,6 +96,7 @@ pub use cntp::{Execute, SynchronizeNetworkTime};
 pub use cntpcid::SetGprsBearerProfileId;
 pub use cops::{GetOperatorInfo, OperatorFormat, OperatorInfo, OperatorMode};
 pub use cpowd::PowerDown;
+pub use cpin::GetPinStatus;
 pub use cpsi::{GetSystemInfo, SystemInfo, SystemMode};
 pub use csclk::SetSlowClock;
 pub use cscs::{CharacterSet, SetTeCharacterSet};
@@ -149,6 +151,7 @@ pub enum ResponseCode {
     IpExt(IpExt),
     Iccid(Iccid),
     SignalQuality(SignalQuality),
+    CPin(unsolicited::CPin),
     SystemInfo(SystemInfo),
     OperatorInfo(OperatorInfo),
     FwVersion(FwVersion),
@@ -156,6 +159,8 @@ pub enum ResponseCode {
     ApRev(ApRev),
     QualityControlNumber(QualityControlNumber),
     ProductInfoImei(ProductInfoImei),
+    ConfigureEDRX(ConfigureEDRX),
+    PdpContextActivation(cgact::CGact),
     NetworkApn(NetworkApn),
     NetworkTime(NetworkTime),
     DownloadInfo(DownloadInfo),
@@ -187,6 +192,7 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::IpExt))
             .or_else(parse(line, ResponseCode::Iccid))
             .or_else(parse(line, ResponseCode::SignalQuality))
+            .or_else(parse(line, ResponseCode::CPin))
             .or_else(parse(line, ResponseCode::SystemInfo))
             .or_else(parse(line, ResponseCode::OperatorInfo))
             .or_else(parse(line, ResponseCode::FwVersion))
@@ -194,6 +200,8 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::ApRev))
             .or_else(parse(line, ResponseCode::QualityControlNumber))
             .or_else(parse(line, ResponseCode::ProductInfoImei))
+            .or_else(parse(line, ResponseCode::ConfigureEDRX))
+            .or_else(parse(line, ResponseCode::PdpContextActivation))
             .or_else(parse(line, ResponseCode::NetworkApn))
             .or_else(parse(line, ResponseCode::NetworkTime))
             .or_else(parse(line, ResponseCode::DownloadInfo))

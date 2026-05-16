@@ -1,6 +1,6 @@
 use crate::{
     BuildIo, PowerState, SplitIo, StateSignal,
-    at_command::unsolicited::{self, CFun, CPin, NewSmsIndex},
+    at_command::unsolicited::{self, CFun, NewSmsIndex},
 };
 use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{Either3, select3};
@@ -125,10 +125,15 @@ where
                     self.ready.send(ReadyState::PowerDown);
                     return Ok(());
                 }
-                Urc::CPin(CPin) => {
+                Urc::CPin(cpin) => {
+                    let mut buf =
+                        with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
+                    *buf = ResponseCode::CPin(cpin);
+                    buf.send_done();
                     return Ok(());
                 }
                 Urc::CFun(CFun) => {
+                    self.ready.send(ReadyState::Ready);
                     return Ok(());
                 }
                 Urc::Ready(unsolicited::Ready) => {

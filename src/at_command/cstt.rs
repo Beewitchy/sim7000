@@ -15,10 +15,18 @@ pub struct StartTask {
 impl AtRequest for StartTask {
     type Response = GenericOk;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(
-            buf,
-            "AT+CSTT={:?},{:?},{:?}\r",
-            self.apn, self.username, self.password,
-        )
+        if !self.username.is_empty() || !self.password.is_empty() {
+            write!(
+                buf,
+                "AT+CNCFG=0,0,\"{}\",\"{}\",\"{}\",3\r",
+                self.apn.as_str(), self.username.as_str(), self.password.as_str(),
+            )
+        } else {
+            write!(
+                buf,
+                "AT+CNCFG=0,0,\"{}\"\r",
+                self.apn.as_str(),
+            )
+        }
     }
 }

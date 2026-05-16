@@ -45,7 +45,6 @@ impl AtRequest for GetRegistrationStatus {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Functionality {
     Minimal = 0,
-
     Full = 1,
 }
 

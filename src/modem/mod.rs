@@ -5,8 +5,9 @@ pub mod power;
 use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        At, AtRequest, BearerSettings, CharacterSet, NetworkMode, SelectMessageService,
-        SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate, cbatchk, ccid,
+        At, AtRequest, BearerSettings, CharacterSet, GetPinStatus, NetworkMode,
+        SelectMessageService, SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate,
+        cbatchk, ccid,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
@@ -24,7 +25,7 @@ use crate::{
         creg, csclk, csq, cstt, gsn,
         ifc::{self, FlowControl},
         ipr::{self, BaudRate},
-        unsolicited::{NetworkRegistration, NewSmsIndex, RegistrationStatus},
+        unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
     },
     gnss::Gnss,
     log,
@@ -62,6 +63,7 @@ pub struct Modem<'m, P, M: RawMutex, const N: usize> {
     current_network_priority: Vec<RadioAccessTechnology, 3>,
     /// Time given to each RAT before trying the next
     auto_reg_timeout: Duration,
+    reg_retries: usize,
 }
 
 const MODEM_POWER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -151,7 +153,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             ]
             .into_iter()
             .collect(),
-            auto_reg_timeout: Duration::from_secs(2 * 60),
+            auto_reg_timeout: Duration::from_secs(60),
+            reg_retries: 0,
         };
 
         let io_pump = RawIoPump {
@@ -184,16 +187,29 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
         log::info!("initializing modem");
 
-        self.deactivate().await?;
-        with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
-        self.power_signal.broadcast(PowerState::On);
-
-        let Some(mut ready) = self.context.ready.receiver() else { return Err(Error::InvalidContext); };
-        with_timeout(MODEM_POWER_TIMEOUT, ready.get_and(|ready| matches!(ready, ReadyState::Ready))).await?;
+        // Wait for ready state--cycle power if necessary
+        let Some(mut ready) = self.context.ready.receiver() else {
+            return Err(Error::InvalidContext);
+        };
+        for _ in 0..2 {
+            self.power_signal.broadcast(PowerState::On);
+            match with_timeout(
+                Duration::from_secs(5),
+                ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
+            )
+            .await
+            {
+                Ok(_) => break,
+                _ => {}
+            }
+            self.deactivate().await?;
+            self.power_signal.broadcast(PowerState::Off);
+            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        }
 
         let mut commands = self.commands.lock().await;
 
-    // todo: ellie (16.05.2026) - flow control configuration
+        // todo: ellie (16.05.2026) - flow control configuration
         // let set_flow_control = ifc::SetFlowControl {
         //     dce_by_dte: FlowControl::Hardware,
         //     dte_by_dce: FlowControl::Hardware,
@@ -211,22 +227,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //     }
         // }
 
-        // Modem has been known to get stuck in an unresponsive state until we jiggle it by
-        // enabling echo. This is fine.
-        for _ in 0..5 {
-            if let Ok(Ok(_)) = with_timeout(
-                Duration::from_millis(1000),
-                commands.run(ate::SetEcho(true)),
-            )
-            .await
-            {
-                break;
-            }
-        }
+        try_retry!(
+            ("AT", 4, Duration::from_millis(250)),
+            commands.run(At).await
+        )?;
 
-    // todo: ellie (16.05.2026) - sleep & slow-clock configuration
+        // todo: ellie (16.05.2026) - sleep & slow-clock configuration
         commands.run(csclk::SetSlowClock(false)).await?;
-        commands.run(At).await?;
+
         commands.run(ipr::SetBaudRate(BaudRate::Hz115200)).await?;
         // commands.run(set_flow_control).await?;
         commands
@@ -234,12 +242,17 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .await?;
 
         match config.network_mode {
-            NetworkModeConfig::Automatic { priority, timeout } => {
+            NetworkModeConfig::Automatic {
+                priority,
+                timeout,
+                reg_retries,
+            } => {
                 if let Some(prio) = priority {
                     self.current_network_priority = prio;
                 }
                 self.automatic_registration = true;
                 self.auto_reg_timeout = timeout;
+                self.reg_retries = reg_retries;
             }
             NetworkModeConfig::Manual {
                 network_mode,
@@ -250,27 +263,37 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
-    // todo: ellie (16.05.2026) - Ri interrupt pin config
+        // todo: ellie (16.05.2026) - Ri interrupt pin config
         commands.run(cfgri::ConfigureRiPin(RiPinMode::Off)).await?;
         commands.run(cbatchk::EnableVBatCheck(false)).await?;
 
-        let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
-        let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
-        let result = try_retry!(
-            ("CEDRX", 5, Duration::from_millis(200)),
-            commands.run(configure_edrx).await
-        );
-        if edrx_required {
-            let _ = result?;
-        } else {
-            // Failure is fine, this mode isn't necessarily supported
-            let _ = result;
-        }
+        // let current_edrx = commands
+        //     .run(cedrxs::GetEDRXSetting)
+        //     .await
+        //     .ok()
+        //     .map(|(current_edrx, _)| current_edrx);
+
+        // let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
+        // let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
+        // if current_edrx.is_none_or(|current_edrx| current_edrx != configure_edrx) {
+        //     let result = try_retry!(
+        //         ("CEDRX", 5, Duration::from_millis(200)),
+        //         commands.run(configure_edrx).await
+        //     );
+        //     if edrx_required {
+        //         let _ = result?;
+        //     } else {
+        //         // Failure is fine, this mode isn't necessarily supported
+        //         let _ = result;
+        //     }
+        // }
 
         drop(commands);
 
-        log::info!("modem successfully initialized, turning it back off...");
-        self.deactivate().await?;
+        // log::info!("modem successfully initialized, turning it back off...");
+        // self.deactivate().await?;
+
+        embassy_time::Timer::after_secs(2).await;
 
         Ok(())
     }
@@ -333,10 +356,26 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         if matches!(self.power.state(), PowerState::Off) {
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
-        self.power_signal.broadcast(PowerState::On);
 
-        let Some(mut ready) = self.context.ready.receiver() else { return Err(Error::InvalidContext); };
-        with_timeout(MODEM_POWER_TIMEOUT, ready.get_and(|ready| matches!(ready, ReadyState::Ready))).await?;
+        // Wait for ready state--cycle power if necessary
+        let Some(mut ready) = self.context.ready.receiver() else {
+            return Err(Error::InvalidContext);
+        };
+        for _ in 0..2 {
+            self.power_signal.broadcast(PowerState::On);
+            match with_timeout(
+                Duration::from_secs(10),
+                ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
+            )
+            .await
+            {
+                Ok(_) => break,
+                _ => {}
+            }
+            self.deactivate().await?;
+            self.power_signal.broadcast(PowerState::Off);
+            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        }
 
         let mut commands = self.commands.lock().await;
 
@@ -359,11 +398,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
             .await?;
 
-        commands
-            .run(cgreg::SetFunctionality(
-                cgreg::Functionality::Full,
-                Some(cgreg::SetFunctionalityOption::Reset),
-            ))
+        let _ = with_timeout(Duration::from_secs(30), self.wait_for_sim(&mut commands))
+            .await
+            .map_err(|_| Error::SimUnavailable)?;
+
+        let _ = commands
+            .run(cgreg::SetFunctionality(cgreg::Functionality::Full, None))
             .await?;
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
@@ -373,7 +413,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         try_retry!(
             ("CREG", 5, Duration::from_secs(1)),
             commands
-                .run(creg::ConfigureRegistrationUrc::EnableRegLocation)
+                .run(creg::ConfigureRegistrationUrc::EnableReg)
                 .await
         )?;
         try_retry!(
@@ -385,9 +425,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         try_retry!(
             ("CGREG", 5, Duration::from_secs(1)),
             commands
-                .run(cgreg::ConfigureRegistrationUrc::EnableRegLocation)
+                .run(cgreg::ConfigureRegistrationUrc::EnableReg)
                 .await
         )?;
+
         let _ = commands.run(cgreg::GetRegistrationStatus).await;
 
         if self.automatic_registration {
@@ -405,13 +446,20 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     .expect("we just removed an element");
             }
         } else {
-            let _ = commands.run(cgreg::GetRegistrationStatus).await;
-            let _ = self.wait_for_registration().await?;
+            for _ in 0..self.reg_retries+1 {
+                let _ = commands.run(cgreg::GetRegistrationStatus).await;
+                match self.wait_for_registration().await {
+                    Ok(_) => break,
+                    _ => {}
+                }
+                embassy_time::Timer::after_secs(2).await;
+            }
         }
         commands.run(cgact::GetPdpContextActivation).await?;
         log::info!("registered to network");
 
-        commands.run(cipshut::ShutConnections).await?;
+        // ignore error--not important
+        let _ = commands.run(cipshut::ShutConnections).await;
 
         let apn = match &self.apn {
             Some(apn) => apn,
@@ -428,7 +476,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         log::info!("authenticating with apn {:?}", apn);
 
-        commands.run(cipmux::EnableMultiIpConnection(true)).await?;
+        let _ = commands.run(cipmux::EnableMultiIpConnection(true)).await;
         commands
             .run(cstt::StartTask {
                 apn: apn.clone(),
@@ -464,36 +512,56 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         commands: &mut CommandRunner<'_, M>,
     ) -> Result<RadioAccessTechnology, Error> {
         for mode in &self.current_network_priority {
-            match mode {
-                RadioAccessTechnology::LteCatM1 => {
-                    commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
-                    commands.run(cmnb::SetNbMode(NbMode::CatM)).await?;
+            // Sometimes SIM isn't detected--cycle it to try
+            // get it working
+            for retry in 0..self.reg_retries+1 {
+                match mode {
+                    RadioAccessTechnology::LteCatM1 => {
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
+                        commands.run(cmnb::SetNbMode(NbMode::CatM)).await?;
+                    }
+                    RadioAccessTechnology::Gsm => {
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Gsm)).await?;
+                    }
+                    RadioAccessTechnology::LteNbIot => {
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
+                        commands.run(cmnb::SetNbMode(NbMode::NbIot)).await?;
+                    }
                 }
-                RadioAccessTechnology::Gsm => {
-                    commands.run(cnmp::SetNetworkMode(NetworkMode::Gsm)).await?;
-                }
-                RadioAccessTechnology::LteNbIot => {
-                    commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
-                    commands.run(cmnb::SetNbMode(NbMode::NbIot)).await?;
-                }
-            }
 
-            log::info!("Trying {:?}...", mode);
-            let _ = commands.run(cgreg::GetRegistrationStatus).await;
-            match with_timeout(self.auto_reg_timeout, self.wait_for_registration()).await {
-                Ok(Ok(_)) => {
-                    log::info!("Registered using {:?}", mode);
-                    return Ok(*mode);
+                log::info!("Trying {:?}...", mode);
+                let _ = commands.run(cgreg::GetRegistrationStatus).await;
+                match with_timeout(self.auto_reg_timeout, self.wait_for_registration()).await {
+                    Ok(Ok(_)) => {
+                        log::info!("Registered using {:?}", mode);
+                        return Ok(*mode);
+                    }
+                    _ => {}
                 }
-                _ => {}
+
+                log::debug!("Retry {}...", retry);
+                embassy_time::Timer::after_secs(2).await;
             }
         }
 
         Err(Error::Timeout)
     }
 
+    async fn wait_for_sim(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error> {
+        loop {
+            let (pin_status, _) = commands.run(GetPinStatus).await?;
+            match pin_status {
+                CPin::NotReady => {}
+                CPin::NotInserted => {}
+                CPin::Ready => return Ok(()),
+            }
+        }
+    }
+
     pub async fn deactivate(&mut self) -> Result<(), Error> {
-        if !matches!(self.power.state(), PowerState::Off) {
+        if !matches!(self.power.state(), PowerState::Off)
+            && matches!(self.context.ready.try_get(), Some(ReadyState::Ready))
+        {
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
             // result ignored because power-off should proceed regardless
@@ -954,6 +1022,10 @@ pub enum NetworkModeConfig {
         priority: Option<Vec<RadioAccessTechnology, 3>>,
         /// How much time is given for each radio access technology before trying the next
         timeout: Duration,
+        /// How many times to retry registration immediately
+        ///  Sometimes this helps the sim connect quicker,
+        ///  rather than redoing the full activation.
+        reg_retries: usize,
     },
     /// The modules built-in modes
     Manual {
@@ -978,6 +1050,7 @@ impl Default for RegistrationConfig {
             network_mode: NetworkModeConfig::Automatic {
                 priority: None,
                 timeout: Duration::from_secs(2 * 60),
+                reg_retries: 1,
             },
             edrx: EDRXConfig::Disabled,
         }
