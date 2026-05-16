@@ -27,6 +27,7 @@ pub mod cgnspwr;
 pub mod cgnsurc;
 pub mod cgnsxtra;
 pub mod cgreg;
+pub mod cgact;
 pub mod cifsrex;
 pub mod ciicr;
 pub mod cipclose;
@@ -199,6 +200,7 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::CopyResponse))
             .or_else(parse(line, ResponseCode::XtraStatus))
             .or_else(parse(line, ResponseCode::CclkTime))
+            .or_else(parse(line, ResponseCode::PowerDown))
             // Imei is weird and may not be unambiguously parsed.
             // Take care if trying to implement other, similar, response codes.
             .or_else(parse(line, ResponseCode::Imei))

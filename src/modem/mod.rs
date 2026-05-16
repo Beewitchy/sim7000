@@ -5,13 +5,12 @@ pub mod power;
 use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        At, AtRequest, BearerSettings, CharacterSet, NetworkMode,
-        SelectMessageService, SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate,
-        cbatchk, ccid,
+        At, AtRequest, BearerSettings, CharacterSet, NetworkMode, SelectMessageService,
+        SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate, cbatchk, ccid,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
-        cgmr, cgnapn,
+        cgact, cgmr, cgnapn,
         cgnsmod::{self, WorkMode},
         cgnspwr, cgnsurc, cgreg, cifsrex, ciicr, cipmux, cipshut,
         cmee::{self, CMEErrorMode},
@@ -315,7 +314,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn activate(&mut self) -> Result<(), Error> {
         log::info!("activating modem");
-        with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        if matches!(self.power.state(), PowerState::Off) {
+            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        }
         self.power_signal.broadcast(PowerState::On);
         let set_flow_control = ifc::SetFlowControl {
             dce_by_dte: FlowControl::Hardware,
@@ -337,23 +338,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
             .await?;
-
-        // Set up SMS stuff
-        try_retry!(
-            ("CMGF", 5, Duration::from_secs(1)),
-            commands
-                .run(SetSmsMessageFormat(SmsMessageFormat::Text))
-                .await
-        )?;
-        commands.run(SelectMessageService).await?;
-        commands.run(SetTeCharacterSet(CharacterSet::GSM)).await?;
-        commands
-            .run(SetSmsIndication {
-                mode: SmsIndicationMode::BufferWhenLinkBusy,
-                routing: SmsMtMode::Index,
-            })
-            .await?;
-        self.context.sms_state.signal(SmsState::Available);
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
         // (GSM, LTE, etc). But for simplicity's sake we set up URCs for all of them. This is also
@@ -393,8 +377,17 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     .expect("we just removed an element");
             }
         } else {
-            self.wait_for_registration().await?;
+            embassy_futures::select::select(
+                async {
+                    loop {
+                        commands.run(cgreg::GetRegistrationStatus).await;
+                    }
+                },
+                self.wait_for_registration(),
+            )
+            .await;
         }
+        commands.run(cgact::GetPdpContextActivation).await?;
         log::info!("registered to network");
 
         commands.run(cipshut::ShutConnections).await?;
@@ -465,15 +458,25 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
 
             log::info!("Trying {:?}...", mode);
-            match with_timeout(self.auto_reg_timeout, self.wait_for_registration()).await {
-                Ok(Ok(_)) => {
+            match with_timeout(
+                self.auto_reg_timeout,
+                embassy_futures::select::select(
+                    async {
+                        loop {
+                            let _ = commands.run(cgreg::GetRegistrationStatus).await;
+                        }
+                    },
+                    self.wait_for_registration(),
+                ),
+            )
+            .await
+            {
+                Ok(embassy_futures::select::Either::First(_)) => unreachable!(),
+                Ok(embassy_futures::select::Either::Second(Ok(_))) => {
                     log::info!("Registered using {:?}", mode);
                     return Ok(*mode);
                 }
-                Ok(Err(_)) => {
-                    // this should never happen since wait_for_registration timeout is longer than 2 min
-                }
-                Err(_) => {}
+                _ => {}
             }
         }
 
@@ -485,16 +488,25 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
             // result ignored because power-off should proceed regardless
-            let _ = commands.run_with_timeout(Some(Duration::from_secs(10)), cpowd::PowerDown(cpowd::Mode::Normal)).await;
+            let _ = commands
+                .run_with_timeout(
+                    Some(Duration::from_secs(10)),
+                    cpowd::PowerDown(cpowd::Mode::Normal),
+                )
+                .await;
         }
         self.context.sms_state.signal(SmsState::Unavailable);
         self.power_signal.broadcast(PowerState::Off);
         self.context.registration_events.signal(NET_REG_DEFAULT);
         self.context.tcp.disconnect_all().await;
 
-        with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
-            .await
-            .map_err(Error::from)
+        if !matches!(self.power.state(), PowerState::Off) {
+            with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
+                .await
+                .map_err(Error::from)
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn reset(&mut self) {
@@ -539,6 +551,27 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             _ = warn_on_long_wait.fuse() => unreachable!(),
             _ = Timer::after(Duration::from_secs(10 * 60)).fuse() => Err(Error::Timeout),
         }
+    }
+
+    pub async fn activate_sms(&mut self) -> Result<(), Error> {
+        let mut commands = self.commands.lock().await;
+        // Set up SMS stuff
+        try_retry!(
+            ("CMGF", 5, Duration::from_secs(1)),
+            commands
+                .run(SetSmsMessageFormat(SmsMessageFormat::Text))
+                .await
+        )?;
+        commands.run(SelectMessageService).await?;
+        commands.run(SetTeCharacterSet(CharacterSet::GSM)).await?;
+        commands
+            .run(SetSmsIndication {
+                mode: SmsIndicationMode::BufferWhenLinkBusy,
+                routing: SmsMtMode::Index,
+            })
+            .await?;
+        self.context.sms_state.signal(SmsState::Available);
+        Ok(())
     }
 
     pub async fn get_sms_stream(&mut self) -> (SmsStream<'_, 'm, M>, SmsSignal<'m, M>) {
