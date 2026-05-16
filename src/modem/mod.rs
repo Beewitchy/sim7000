@@ -181,8 +181,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let mut commands = self.commands.lock().await;
 
         let set_flow_control = ifc::SetFlowControl {
-            dce_by_dte: FlowControl::Hardware,
-            dte_by_dce: FlowControl::Hardware,
+            dce_by_dte: FlowControl::NoFlowControl,
+            dte_by_dce: FlowControl::NoFlowControl,
         };
 
         // Turn on hardware flow control, the modem does not save this state on reboot.
@@ -235,21 +235,21 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
-        commands.run(cfgri::ConfigureRiPin(RiPinMode::On)).await?;
+        commands.run(cfgri::ConfigureRiPin(RiPinMode::Off)).await?;
         commands.run(cbatchk::EnableVBatCheck(true)).await?;
 
-        let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
-        let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
-        let result = try_retry!(
-            ("CEDRX", 5, Duration::from_millis(200)),
-            commands.run(configure_edrx).await
-        );
-        if edrx_required {
-            let _ = result?;
-        } else {
-            // Failure is fine, this mode isn't necessarily supported
-            let _ = result;
-        }
+        // let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
+        // let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
+        // let result = try_retry!(
+        //     ("CEDRX", 5, Duration::from_millis(200)),
+        //     commands.run(configure_edrx).await
+        // );
+        // if edrx_required {
+        //     let _ = result?;
+        // } else {
+        //     // Failure is fine, this mode isn't necessarily supported
+        //     let _ = result;
+        // }
 
         drop(commands);
 
@@ -319,8 +319,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         }
         self.power_signal.broadcast(PowerState::On);
         let set_flow_control = ifc::SetFlowControl {
-            dce_by_dte: FlowControl::Hardware,
-            dte_by_dce: FlowControl::Hardware,
+            dce_by_dte: FlowControl::NoFlowControl,
+            dte_by_dce: FlowControl::NoFlowControl,
         };
 
         let mut commands = self.commands.lock().await;
@@ -337,6 +337,13 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         commands.run(ate::SetEcho(false)).await?;
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
+            .await?;
+
+        commands
+            .run(cgreg::SetFunctionality(
+                cgreg::Functionality::Full,
+                Some(cgreg::SetFunctionalityOption::Reset),
+            ))
             .await?;
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
@@ -361,6 +368,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .run(cgreg::ConfigureRegistrationUrc::EnableRegLocation)
                 .await
         )?;
+        let _ = commands.run(cgreg::GetRegistrationStatus).await;
 
         if self.automatic_registration {
             let active_mode = self.automatic_registration(&mut commands).await?;
@@ -377,15 +385,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     .expect("we just removed an element");
             }
         } else {
-            embassy_futures::select::select(
-                async {
-                    loop {
-                        commands.run(cgreg::GetRegistrationStatus).await;
-                    }
-                },
-                self.wait_for_registration(),
-            )
-            .await;
+            let _ = commands.run(cgreg::GetRegistrationStatus).await;
+            let _ = self.wait_for_registration().await?;
         }
         commands.run(cgact::GetPdpContextActivation).await?;
         log::info!("registered to network");
@@ -458,21 +459,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
 
             log::info!("Trying {:?}...", mode);
-            match with_timeout(
-                self.auto_reg_timeout,
-                embassy_futures::select::select(
-                    async {
-                        loop {
-                            let _ = commands.run(cgreg::GetRegistrationStatus).await;
-                        }
-                    },
-                    self.wait_for_registration(),
-                ),
-            )
-            .await
-            {
-                Ok(embassy_futures::select::Either::First(_)) => unreachable!(),
-                Ok(embassy_futures::select::Either::Second(Ok(_))) => {
+            let _ = commands.run(cgreg::GetRegistrationStatus).await;
+            match with_timeout(self.auto_reg_timeout, self.wait_for_registration()).await {
+                Ok(Ok(_)) => {
                     log::info!("Registered using {:?}", mode);
                     return Ok(*mode);
                 }

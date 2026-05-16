@@ -1,6 +1,5 @@
 use crate::{
-    at_command::unsolicited::NewSmsIndex, modem::power::PowerSignalListener, BuildIo, PowerState,
-    SplitIo, StateSignal,
+    BuildIo, PowerState, SplitIo, StateSignal, at_command::unsolicited::{CFun, CPin, NewSmsIndex}, modem::power::PowerSignalListener
 };
 use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{select3, Either3};
@@ -113,6 +112,12 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
                 }
                 Urc::PowerDown(PowerDown::OverVoltage) => {
                     self.voltage_warning.signal(VoltageWarning::OverVoltage);
+                    return Ok(());
+                }
+                Urc::CPin(CPin) => {
+                    return Ok(());
+                }
+                Urc::CFun(CFun) => {
                     return Ok(());
                 }
                 Urc::PowerDown(PowerDown::Normal) => {
