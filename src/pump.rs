@@ -58,11 +58,12 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
         if let Ok(message) = Urc::from_line(&line) {
             // First, check if it's an unsolicited message
 
-            log::debug!("Got URC: {:?}", line.as_str());
+            log::debug!("Got URC: {:?}", line);
             match message {
                 Urc::NetworkRegistration(registration) => {
                     log::info!("registration status: {:?}", registration);
                     self.registration_events.signal(registration);
+                    return Ok(());
                 }
                 Urc::ReceiveHeader(header) => {
                     let mut length = header.length;
@@ -84,31 +85,43 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
                         log::debug!("Bytes sent to tcp connection {}", connection);
                     }
                     log::debug!("Done sending to tcp connection {}", connection);
+                    return Ok(());
                 }
                 Urc::Cmti(message) => {
                     if let Err(e) = self.sms_indices.try_send(message) {
                         log::error!("Failed to send SMS index: {:?}", e);
+                        // todo: ellie (16.05.2026) - return error here?
                     }
+                    return Ok(());
                 }
                 Urc::ConnectionMessage(message) => {
                     let slot = &self.tcp.slots[message.index];
                     slot.peek().events.send(message.message);
+                    return Ok(());
                 }
                 Urc::GnssReport(report) => {
                     self.gnss.signal(report);
+                    return Ok(());
                 }
                 Urc::VoltageWarning(warning) => {
                     self.voltage_warning.signal(warning);
+                    return Ok(());
                 }
                 Urc::PowerDown(PowerDown::UnderVoltage) => {
                     self.voltage_warning.signal(VoltageWarning::UnderVoltage);
+                    return Ok(());
                 }
                 Urc::PowerDown(PowerDown::OverVoltage) => {
                     self.voltage_warning.signal(VoltageWarning::OverVoltage);
+                    return Ok(());
+                }
+                Urc::PowerDown(PowerDown::Normal) => {
+                    // Normal power down isn't an unsolicited response
                 }
                 _ => log::warn!("Unhandled URC: {:?}", message),
             }
-        } else if let Ok(mut response) = ResponseCode::from_line(&line) {
+        }
+        if let Ok(mut response) = ResponseCode::from_line(&line) {
             // If it's not a URC, try to parse it as a regular response code
 
             // Sms messages are a bit of a special case,
@@ -123,9 +136,9 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
                 }
 
                 sms.message = line[..line.len()].try_into().unwrap_or_default();
+            } else {
+                log::debug!("Got generic response: {:?}", line);
             }
-
-            log::debug!("Got generic response: {:?}", line.as_str());
             let mut buf = with_timeout(
                 Duration::from_secs(10),
                 self.generic_response.send(),
@@ -133,13 +146,13 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
             .await?;
             *buf = response;
             buf.send_done();
+            return Ok(());
         } else {
             // The modem likely sent us gibberish we could not understand.
             // TODO: We might want to trigger a reboot when the modem starts acting like this.
-            log::error!("Got unknown response: {:?}", line.as_str());
+            log::debug!("Got unknown response: {:?}", line);
         }
-
-        Ok(())
+        Err(Error::UnknownResponse)
     }
 }
 
@@ -236,6 +249,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> Pump for RawIoPump<'context,
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
+        log::trace!("{:?}", self.power_state);
         if self.power_state != PowerState::Off {
             self.high_power_pump().await?;
         } else {

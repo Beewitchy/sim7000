@@ -11,6 +11,7 @@ pub use generic_response::{CloseOk, GenericOk, SimError, WritePrompt};
 
 pub mod at;
 pub mod ate;
+pub mod ati;
 pub mod cbatchk;
 pub mod ccid;
 pub mod cclk;
@@ -46,6 +47,7 @@ pub mod cnmp;
 pub mod cntp;
 pub mod cntpcid;
 pub mod cops;
+pub mod cpowd;
 pub mod cpsi;
 pub mod creg;
 pub mod csclk;
@@ -61,6 +63,7 @@ pub mod sapbr;
 
 pub use at::At;
 pub use ate::SetEcho;
+pub use ati::{GetProductInformation, ApRev, Csub, QualityControlNumber, ProductInfoImei};
 pub use cbatchk::EnableVBatCheck;
 pub use ccid::{Iccid, ShowIccid};
 pub use cedrxs::{AcTType, ConfigureEDRX, EDRXSetting};
@@ -90,6 +93,7 @@ pub use cnmp::{NetworkMode, SetNetworkMode};
 pub use cntp::{Execute, SynchronizeNetworkTime};
 pub use cntpcid::SetGprsBearerProfileId;
 pub use cops::{GetOperatorInfo, OperatorFormat, OperatorInfo, OperatorMode};
+pub use cpowd::PowerDown;
 pub use cpsi::{GetSystemInfo, SystemInfo, SystemMode};
 pub use csclk::SetSlowClock;
 pub use cscs::{CharacterSet, SetTeCharacterSet};
@@ -101,8 +105,7 @@ pub use httptofs::DownloadToFileSystem;
 pub use ifc::{FlowControl, SetFlowControl};
 pub use ipr::{BaudRate, SetBaudRate};
 pub use sapbr::{BearerSettings, CmdType, ConParamType};
-
-use crate::at_command::cclk::CclkTime;
+use cclk::CclkTime;
 
 use self::{
     cgnscold::XtraStatus, cgnscpy::CopyResponse, cntp::NetworkTime, httptofs::DownloadInfo,
@@ -148,11 +151,16 @@ pub enum ResponseCode {
     SystemInfo(SystemInfo),
     OperatorInfo(OperatorInfo),
     FwVersion(FwVersion),
+    Csub(Csub),
+    ApRev(ApRev),
+    QualityControlNumber(QualityControlNumber),
+    ProductInfoImei(ProductInfoImei),
     NetworkApn(NetworkApn),
     NetworkTime(NetworkTime),
     DownloadInfo(DownloadInfo),
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
+    PowerDown(unsolicited::PowerDown),
     Imei(Imei),
     SmsMessageFormat(SmsMessageFormat),
     MessageReference(MessageReference),
@@ -181,6 +189,10 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::SystemInfo))
             .or_else(parse(line, ResponseCode::OperatorInfo))
             .or_else(parse(line, ResponseCode::FwVersion))
+            .or_else(parse(line, ResponseCode::Csub))
+            .or_else(parse(line, ResponseCode::ApRev))
+            .or_else(parse(line, ResponseCode::QualityControlNumber))
+            .or_else(parse(line, ResponseCode::ProductInfoImei))
             .or_else(parse(line, ResponseCode::NetworkApn))
             .or_else(parse(line, ResponseCode::NetworkTime))
             .or_else(parse(line, ResponseCode::DownloadInfo))

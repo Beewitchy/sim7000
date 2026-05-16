@@ -1,13 +1,14 @@
 use core::str::from_utf8;
 use embassy_sync::{blocking_mutex::raw::RawMutex, pipe::Pipe};
 use embedded_io_async::Read;
-use heapless::{String, Vec};
+use heapless::{Vec};
 
 use crate::{log, Error};
 
 pub struct ModemReader<'context, M: RawMutex> {
     read: &'context Pipe<M, 2048>,
     buffer: Vec<u8, 256>,
+    line_end: Option<usize>,
 }
 
 impl<'context, M> ModemReader<'context, M> where M: RawMutex {
@@ -15,10 +16,16 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
         ModemReader {
             read,
             buffer: Vec::new(),
+            line_end: None,
         }
     }
 
-    pub async fn read_line(&mut self) -> Result<String<256>, Error> {
+    pub async fn read_line(&mut self) -> Result<&str, Error> {
+        if let Some(line_end) = self.line_end.take() {
+            // Remove the line from the buffer
+            self.buffer.rotate_left(line_end);
+            self.buffer.truncate(self.buffer.len() - (line_end));
+        }
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
@@ -39,7 +46,7 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
                 self.buffer
                     .truncate(self.buffer.len() - MODEM_INPUT_PROMPT.len());
 
-                return Ok(MODEM_INPUT_PROMPT.try_into().unwrap_or_default());
+                return Ok(MODEM_INPUT_PROMPT);
             } else if let Some(position) = self
                 .buffer
                 .windows(LINE_END.len())
@@ -63,12 +70,10 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
                     continue;
                 }
 
-                let line = line.trim(); // The modem likes to be inconsistent with white space
-                let line = heapless::String::try_from(line).map_err(|_| Error::InvalidUtf8)?;
+                self.line_end = Some(line_end);
 
-                // Remove the line from the buffer
-                self.buffer.rotate_left(line_end);
-                self.buffer.truncate(self.buffer.len() - (line_end));
+                let line = line.trim(); // The modem likes to be inconsistent with white space
+                // let line = heapless::String::try_from(line).map_err(|_| Error::InvalidUtf8)?;
 
                 return Ok(line);
             }

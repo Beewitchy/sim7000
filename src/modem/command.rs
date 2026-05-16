@@ -229,10 +229,10 @@ where
                 Err(err) => {
                     match &*err {
                         ResponseCode::Error(error) => return Err(Error::Sim(*error)),
-                        unknown_response => {
+                        unexpected_response => {
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
-                            log::warn!("Got unexpected ATResponse: {:?}", unknown_response)
+                            log::warn!("Got unexpected ATResponse: {:?}", unexpected_response)
                         }
                     }
                 }
@@ -329,5 +329,19 @@ impl<T: AtResponse + Clone, Y: AtResponse + Clone, Z: AtResponse + Clone, M: Raw
         let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
         let r3 = <Z as ExpectResponse<M>>::expect(runner).await?;
         Ok((r1, r2, r3))
+    }
+}
+
+impl<T1: AtResponse + Clone, T2: AtResponse + Clone, T3: AtResponse + Clone, T4: AtResponse + Clone, T5: AtResponse + Clone, T6: AtResponse + Clone, M: RawMutex>
+    ExpectResponse<M> for (T1, T2, T3, T4, T5, T6,)
+{
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        let r1 = <T1 as ExpectResponse<M>>::expect(runner).await?;
+        let r2 = <T2 as ExpectResponse<M>>::expect(runner).await?;
+        let r3 = <T3 as ExpectResponse<M>>::expect(runner).await?;
+        let r4 = <T4 as ExpectResponse<M>>::expect(runner).await?;
+        let r5 = <T5 as ExpectResponse<M>>::expect(runner).await?;
+        let r6 = <T6 as ExpectResponse<M>>::expect(runner).await?;
+        Ok((r1, r2, r3, r4, r5, r6,))
     }
 }

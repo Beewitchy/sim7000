@@ -5,8 +5,9 @@ pub mod power;
 use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        At, AtRequest, BearerSettings, CharacterSet, NetworkMode, SelectMessageService,
-        SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate, cbatchk, ccid,
+        At, AtRequest, BearerSettings, CharacterSet, NetworkMode,
+        SelectMessageService, SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate,
+        cbatchk, ccid,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
@@ -19,7 +20,7 @@ use crate::{
         cmgs::{self, SendSmsMessage},
         cmnb::{self, NbMode},
         cnmi::{SetSmsIndication, SmsIndicationMode, SmsMtMode},
-        cnmp, cops,
+        cnmp, cops, cpowd,
         cpsi::{self},
         creg, csclk, csq, cstt, gsn,
         ifc::{self, FlowControl},
@@ -115,7 +116,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     > {
         let (commands_sender, commands_receiver) = context.packet_channels.commands.split();
         let (response_sender, response_receiver) = context.packet_channels.generic_response.split();
-        let commands = Mutex::new(CommandRunner::new(commands_sender, response_receiver));
+        let commands = Mutex::new(
+            CommandRunner::new(commands_sender, response_receiver)
+                .with_timeout(Some(AT_DEFAULT_TIMEOUT)),
+        );
         let modem = Modem {
             commands,
             power_signal: context.shared.power_signal.publisher(),
@@ -171,7 +175,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
         log::info!("initializing modem");
 
-        self.deactivate().await;
+        self.deactivate().await?;
         with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         self.power_signal.broadcast(PowerState::On);
 
@@ -235,17 +239,23 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         commands.run(cfgri::ConfigureRiPin(RiPinMode::On)).await?;
         commands.run(cbatchk::EnableVBatCheck(true)).await?;
 
+        let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
         let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
-        let _ = try_retry!(
+        let result = try_retry!(
             ("CEDRX", 5, Duration::from_millis(200)),
             commands.run(configure_edrx).await
         );
-        commands.run(configure_edrx).await?;
+        if edrx_required {
+            let _ = result?;
+        } else {
+            // Failure is fine, this mode isn't necessarily supported
+            let _ = result;
+        }
 
         drop(commands);
 
         log::info!("modem successfully initialized, turning it back off...");
-        self.deactivate().await;
+        self.deactivate().await?;
 
         Ok(())
     }
@@ -305,8 +315,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn activate(&mut self) -> Result<(), Error> {
         log::info!("activating modem");
-        self.power_signal.broadcast(PowerState::On);
         with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        self.power_signal.broadcast(PowerState::On);
         let set_flow_control = ifc::SetFlowControl {
             dce_by_dte: FlowControl::Hardware,
             dte_by_dce: FlowControl::Hardware,
@@ -470,18 +480,21 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Err(Error::Timeout)
     }
 
-    pub async fn deactivate(&mut self) {
+    pub async fn deactivate(&mut self) -> Result<(), Error> {
+        if !matches!(self.power.state(), PowerState::Off) {
+            log::trace!("sending power-down command");
+            let mut commands = self.commands.lock().await;
+            // result ignored because power-off should proceed regardless
+            let _ = commands.run_with_timeout(Some(Duration::from_secs(10)), cpowd::PowerDown(cpowd::Mode::Normal)).await;
+        }
         self.context.sms_state.signal(SmsState::Unavailable);
         self.power_signal.broadcast(PowerState::Off);
         self.context.registration_events.signal(NET_REG_DEFAULT);
         self.context.tcp.disconnect_all().await;
 
-        if with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
+        with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
             .await
-            .is_err()
-        {
-            log::warn!("timeout while powering off the modem");
-        }
+            .map_err(Error::from)
     }
 
     pub async fn reset(&mut self) {

@@ -11,6 +11,7 @@ pub enum Error {
     Sim(SimError),
     Timeout,
     Serial,
+    UnknownResponse,
 
     /// No default APN was set, and the network did not provide one.
     NoApn,
@@ -41,12 +42,13 @@ impl embedded_io_async::Error for Error {
         match self {
             Error::InvalidUtf8 => embedded_io_async::ErrorKind::InvalidData,
             Error::BufferOverflow => embedded_io_async::ErrorKind::OutOfMemory,
-            Error::Sim(_) => embedded_io_async::ErrorKind::Other,
+            Error::Sim(_) => embedded_io_async::ErrorKind::NotConnected,
             Error::Timeout => embedded_io_async::ErrorKind::TimedOut,
-            Error::Serial => embedded_io_async::ErrorKind::Other,
-            Error::NoApn => embedded_io_async::ErrorKind::Other,
-            Error::Httptofs(_) => embedded_io_async::ErrorKind::Other,
-            Error::Xtra(_) => embedded_io_async::ErrorKind::Other,
+            Error::Serial => embedded_io_async::ErrorKind::BrokenPipe,
+            Error::UnknownResponse => embedded_io_async::ErrorKind::Other,
+            Error::NoApn => embedded_io_async::ErrorKind::NotConnected,
+            Error::Httptofs(_) => embedded_io_async::ErrorKind::Interrupted,
+            Error::Xtra(_) => embedded_io_async::ErrorKind::Interrupted,
             Error::InvalidContext => embedded_io_async::ErrorKind::InvalidInput,
         }
     }
