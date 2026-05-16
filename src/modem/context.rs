@@ -1,23 +1,17 @@
 use embassy_sync::{
     blocking_mutex::raw::RawMutex, pipe::Pipe,
     zerocopy_channel::Channel as ZerocopyChannel, channel::Channel,
-    signal::Signal,
+    signal::Signal, watch::Watch,
 };
 
-use super::{power::PowerSignal, RawAtCommand, SmsState};
+use super::{power::PowerSignal, RawAtCommand, SmsState, ReadyState};
 use crate::{
-    at_command::{
-        unsolicited::{
+    StateSignal, at_command::{
+        ResponseCode, unsolicited::{
             ConnectionMessage, GnssReport, NetworkRegistration, NewSmsIndex, RegistrationStatus,
             VoltageWarning,
-        },
-        ResponseCode,
-    },
-    drop::DropChannel,
-    slot::Slot,
-    tcp::TCP_RX_BUF_LEN,
-    util::{Lagged, RingChannel},
-    StateSignal,
+        }
+    }, drop::DropChannel, slot::Slot, tcp::TCP_RX_BUF_LEN, util::{Lagged, RingChannel}
 };
 
 pub type TcpRxPipe<M> = Pipe<M, TCP_RX_BUF_LEN>;
@@ -41,6 +35,7 @@ pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) drop_channel: DropChannel<M>,
     pub(crate) sms_indices: Channel<M, NewSmsIndex, 5>,
     pub(crate) sms_state: Signal<M, SmsState>,
+    pub(crate) ready: Watch<M, ReadyState, 1>,
     pub(crate) registration_events: StateSignal<M, NetworkRegistration>,
     pub(crate) tcp: TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
@@ -61,6 +56,7 @@ impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS> where M: RawMutex {
             drop_channel: DropChannel::new(),
             sms_indices: Channel::new(),
             sms_state: Signal::new(),
+            ready: Watch::new_with(ReadyState::None),
             registration_events: StateSignal::new(NetworkRegistration {
                 status: RegistrationStatus::Unknown,
                 lac: None,

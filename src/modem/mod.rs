@@ -99,6 +99,15 @@ macro_rules! try_retry {
     }};
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ReadyState {
+    #[default]
+    None,
+    Ready,
+    PowerDown,
+}
+
 impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP_SLOTS> {
     pub fn new<'c, I: BuildIo>(
         io: I,
@@ -160,6 +169,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             tcp: &context.shared.tcp,
             gnss: context.shared.gnss_slot.peek(),
             voltage_warning: context.shared.voltage_slot.peek(),
+            ready: context.shared.ready.sender(),
             sms_indices: context.shared.sms_indices.sender(),
         };
 
@@ -178,24 +188,28 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         self.power_signal.broadcast(PowerState::On);
 
+        let Some(mut ready) = self.context.ready.receiver() else { return Err(Error::InvalidContext); };
+        with_timeout(MODEM_POWER_TIMEOUT, ready.get_and(|ready| matches!(ready, ReadyState::Ready))).await?;
+
         let mut commands = self.commands.lock().await;
 
-        let set_flow_control = ifc::SetFlowControl {
-            dce_by_dte: FlowControl::NoFlowControl,
-            dte_by_dce: FlowControl::NoFlowControl,
-        };
+    // todo: ellie (16.05.2026) - flow control configuration
+        // let set_flow_control = ifc::SetFlowControl {
+        //     dce_by_dte: FlowControl::Hardware,
+        //     dte_by_dce: FlowControl::Hardware,
+        // };
 
-        // Turn on hardware flow control, the modem does not save this state on reboot.
-        // We need to set it as fast as possible to avoid dropping bytes.
-        for _ in 0..5 {
-            if let Ok(Ok(_)) = with_timeout(Duration::from_millis(2000), async {
-                commands.run(set_flow_control).await
-            })
-            .await
-            {
-                break;
-            }
-        }
+        // // Turn on hardware flow control, the modem does not save this state on reboot.
+        // // We need to set it as fast as possible to avoid dropping bytes.
+        // for _ in 0..5 {
+        //     if let Ok(Ok(_)) = with_timeout(Duration::from_millis(2000), async {
+        //         commands.run(set_flow_control).await
+        //     })
+        //     .await
+        //     {
+        //         break;
+        //     }
+        // }
 
         // Modem has been known to get stuck in an unresponsive state until we jiggle it by
         // enabling echo. This is fine.
@@ -210,10 +224,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
-        commands.run(csclk::SetSlowClock(true)).await?;
+    // todo: ellie (16.05.2026) - sleep & slow-clock configuration
+        commands.run(csclk::SetSlowClock(false)).await?;
         commands.run(At).await?;
         commands.run(ipr::SetBaudRate(BaudRate::Hz115200)).await?;
-        commands.run(set_flow_control).await?;
+        // commands.run(set_flow_control).await?;
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
             .await?;
@@ -235,21 +250,22 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
+    // todo: ellie (16.05.2026) - Ri interrupt pin config
         commands.run(cfgri::ConfigureRiPin(RiPinMode::Off)).await?;
-        commands.run(cbatchk::EnableVBatCheck(true)).await?;
+        commands.run(cbatchk::EnableVBatCheck(false)).await?;
 
-        // let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
-        // let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
-        // let result = try_retry!(
-        //     ("CEDRX", 5, Duration::from_millis(200)),
-        //     commands.run(configure_edrx).await
-        // );
-        // if edrx_required {
-        //     let _ = result?;
-        // } else {
-        //     // Failure is fine, this mode isn't necessarily supported
-        //     let _ = result;
-        // }
+        let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
+        let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
+        let result = try_retry!(
+            ("CEDRX", 5, Duration::from_millis(200)),
+            commands.run(configure_edrx).await
+        );
+        if edrx_required {
+            let _ = result?;
+        } else {
+            // Failure is fine, this mode isn't necessarily supported
+            let _ = result;
+        }
 
         drop(commands);
 
@@ -318,22 +334,26 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
         self.power_signal.broadcast(PowerState::On);
-        let set_flow_control = ifc::SetFlowControl {
-            dce_by_dte: FlowControl::NoFlowControl,
-            dte_by_dce: FlowControl::NoFlowControl,
-        };
+
+        let Some(mut ready) = self.context.ready.receiver() else { return Err(Error::InvalidContext); };
+        with_timeout(MODEM_POWER_TIMEOUT, ready.get_and(|ready| matches!(ready, ReadyState::Ready))).await?;
 
         let mut commands = self.commands.lock().await;
 
-        for _ in 0..5 {
-            if let Ok(Ok(_)) = with_timeout(Duration::from_millis(2000), async {
-                commands.run(set_flow_control).await
-            })
-            .await
-            {
-                break;
-            }
-        }
+        // let set_flow_control = ifc::SetFlowControl {
+        //     dce_by_dte: FlowControl::Hardware,
+        //     dte_by_dce: FlowControl::Hardware,
+        // };
+
+        // for _ in 0..5 {
+        //     if let Ok(Ok(_)) = with_timeout(Duration::from_millis(2000), async {
+        //         commands.run(set_flow_control).await
+        //     })
+        //     .await
+        //     {
+        //         break;
+        //     }
+        // }
         commands.run(ate::SetEcho(false)).await?;
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
@@ -492,10 +512,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         if !matches!(self.power.state(), PowerState::Off) {
             with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
                 .await
-                .map_err(Error::from)
-        } else {
-            Ok(())
+                .map_err(Error::from)?;
         }
+        self.context.ready.sender().send(ReadyState::None);
+        Ok(())
     }
 
     pub async fn reset(&mut self) {

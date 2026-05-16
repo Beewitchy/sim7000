@@ -1,29 +1,26 @@
 use crate::{
-    BuildIo, PowerState, SplitIo, StateSignal, at_command::unsolicited::{CFun, CPin, NewSmsIndex}, modem::power::PowerSignalListener
+    BuildIo, PowerState, SplitIo, StateSignal,
+    at_command::unsolicited::{self, CFun, CPin, NewSmsIndex},
 };
 use core::{future::Future, str::from_utf8};
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{Either3, select3};
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex,
-    channel::Sender,
-    zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
-    pipe::Pipe,
-    signal::Signal,
+    blocking_mutex::raw::RawMutex, channel::Sender, pipe::Pipe, signal::Signal, watch, zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender}
 };
-use embassy_time::{with_timeout, Duration};
+use embassy_time::{Duration, with_timeout};
 use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
+use crate::Error;
 use crate::at_command::{
+    AtParseLine, ResponseCode,
     unsolicited::{
         GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
     },
-    AtParseLine, ResponseCode,
 };
 use crate::log;
-use crate::modem::{RawAtCommand, TcpContext};
+use crate::modem::{RawAtCommand, TcpContext, ReadyState, power::PowerSignalListener};
 use crate::read::ModemReader;
-use crate::Error;
 
 pub const PUMP_COUNT: usize = 3;
 
@@ -39,12 +36,15 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) tcp: &'context TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
-    pub(crate) registration_events:
-        &'context StateSignal<M, NetworkRegistration>,
+    pub(crate) ready: watch::Sender<'context, M, ReadyState, 1>,
+    pub(crate) registration_events: &'context StateSignal<M, NetworkRegistration>,
     pub(crate) sms_indices: Sender<'context, M, NewSmsIndex, 5>,
 }
 
-impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS> where M: RawMutex {
+impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS>
+where
+    M: RawMutex,
+{
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
@@ -107,11 +107,22 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
                     return Ok(());
                 }
                 Urc::PowerDown(PowerDown::UnderVoltage) => {
+                    self.ready.send(ReadyState::PowerDown);
                     self.voltage_warning.signal(VoltageWarning::UnderVoltage);
                     return Ok(());
                 }
                 Urc::PowerDown(PowerDown::OverVoltage) => {
+                    self.ready.send(ReadyState::PowerDown);
                     self.voltage_warning.signal(VoltageWarning::OverVoltage);
+                    return Ok(());
+                }
+                Urc::PowerDown(PowerDown::Normal) => {
+                    // Normal power down isn't an unsolicited response
+                    let mut buf =
+                        with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
+                    *buf = ResponseCode::PowerDown(PowerDown::Normal);
+                    buf.send_done();
+                    self.ready.send(ReadyState::PowerDown);
                     return Ok(());
                 }
                 Urc::CPin(CPin) => {
@@ -120,8 +131,9 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
                 Urc::CFun(CFun) => {
                     return Ok(());
                 }
-                Urc::PowerDown(PowerDown::Normal) => {
-                    // Normal power down isn't an unsolicited response
+                Urc::Ready(unsolicited::Ready) => {
+                    self.ready.send(ReadyState::Ready);
+                    return Ok(());
                 }
                 _ => log::warn!("Unhandled URC: {:?}", message),
             }
@@ -144,11 +156,8 @@ impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS
             } else {
                 log::debug!("Got generic response: {:?}", line);
             }
-            let mut buf = with_timeout(
-                Duration::from_secs(10),
-                self.generic_response.send(),
-            )
-            .await?;
+            let mut buf =
+                with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
             *buf = response;
             buf.send_done();
             return Ok(());
@@ -166,7 +175,10 @@ pub struct TxPump<'context, M: RawMutex> {
     pub(crate) commands: ZerocopyReceiver<'context, M, RawAtCommand>,
 }
 
-impl<'context, M> Pump for TxPump<'context, M> where M: RawMutex {
+impl<'context, M> Pump for TxPump<'context, M>
+where
+    M: RawMutex,
+{
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
