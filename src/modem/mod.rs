@@ -486,11 +486,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .await?;
 
         // datasheet specifies 85 seconds max response time
-        commands
-            .run_with_timeout(Some(Duration::from_secs(86)), ciicr::StartGprs)
-            .await?;
+        // commands
+        //     .run_with_timeout(Some(Duration::from_secs(86)), ciicr::StartGprs)
+        //     .await?;
 
-        let (_ip, _) = commands.run(cifsrex::GetLocalIpExt).await?;
+        // let (_ip, _) = commands.run(cifsrex::GetLocalIpExt).await?;
 
         log::info!("modem successfully activated");
         Ok(())
