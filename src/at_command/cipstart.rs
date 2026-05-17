@@ -35,8 +35,8 @@ impl AtRequest for Connect {
 
         write!(
             buf,
-            "AT+CIPSTART={},{mode:?},{:?},\"{}\"\r",
-            self.number, self.destination, self.port
+            "AT+CIPSTART={},\"{mode}\",\"{}\",\"{}\"\r",
+            self.number, self.destination.as_str(), self.port
         )
     }
 }

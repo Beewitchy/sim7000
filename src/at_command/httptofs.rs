@@ -33,7 +33,7 @@ pub struct DownloadToFileSystem {
 impl AtRequest for DownloadToFileSystem {
     type Response = (GenericOk, DownloadInfo);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+HTTPTOFS={:?},{:?}\r", self.url, self.file_path)
+        write!(buf, "AT+HTTPTOFS=\"{}\",\"{}\"\r", self.url, self.file_path)
     }
 }
 

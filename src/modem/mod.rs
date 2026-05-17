@@ -191,10 +191,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
-        for _ in 0..2 {
+        for retry in 0..3 {
             self.power_signal.broadcast(PowerState::On);
             match with_timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(retry * 5),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
             )
             .await
@@ -202,7 +202,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Ok(_) => break,
                 _ => {}
             }
-            self.deactivate().await?;
+            // Skip disconnect on odd retries
+            //  to handle out of sync state
+            if retry % 2 == 0 {
+                self.deactivate().await?;
+            }
             self.power_signal.broadcast(PowerState::Off);
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
@@ -361,10 +365,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
-        for _ in 0..2 {
+        for retry in 0..2 {
             self.power_signal.broadcast(PowerState::On);
             match with_timeout(
-                Duration::from_secs(10),
+                Duration::from_secs(retry * 10),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
             )
             .await
@@ -372,7 +376,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Ok(_) => break,
                 _ => {}
             }
-            self.deactivate().await?;
+            // Skip disconnect on odd retries
+            //  to handle out of sync state
+            if retry % 2 == 0 {
+                self.deactivate().await?;
+            }
             self.power_signal.broadcast(PowerState::Off);
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
@@ -395,7 +403,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         // }
         commands.run(ate::SetEcho(false)).await?;
         commands
-            .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
+            .run(cmee::ConfigureCMEErrors(CMEErrorMode::Verbose))
             .await?;
 
         let _ = with_timeout(Duration::from_secs(30), self.wait_for_sim(&mut commands))

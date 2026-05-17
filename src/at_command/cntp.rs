@@ -21,8 +21,8 @@ impl AtRequest for SynchronizeNetworkTime {
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "AT+CNTP={:?},{},{}\r",
-            self.ntp_server, self.timezone, self.cid
+            "AT+CNTP=\"{}\",{},{}\r",
+            self.ntp_server.as_str(), self.timezone, self.cid
         )
     }
 }

@@ -43,8 +43,8 @@ impl AtRequest for BearerSettings {
             CmdType::OpenBearer => write!(buf, "AT+SAPBR={},1\r", self.cmd_type as u8),
             CmdType::SetBearerParameters => write!(
                 buf,
-                "AT+SAPBR={},1,{:?},{:?}\r",
-                self.cmd_type as u8, con_param_type, self.apn
+                "AT+SAPBR={},1,\"{}\",\"{}\"\r",
+                self.cmd_type as u8, con_param_type, self.apn.as_str()
             ),
             _ => Err(core::fmt::Error::default()),
         }

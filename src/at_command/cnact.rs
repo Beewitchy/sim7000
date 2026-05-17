@@ -22,6 +22,6 @@ pub struct SetAppNetwork {
 impl AtRequest for SetAppNetwork {
     type Response = GenericOk;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNACT={},{:?}\r", self.mode as u8, self.apn)
+        write!(buf, "AT+CNACT={},\"{}\"\r", self.mode as u8, self.apn)
     }
 }
