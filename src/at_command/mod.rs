@@ -22,6 +22,7 @@ pub mod cgmr;
 pub mod cgnapn;
 pub mod cgnscold;
 pub mod cgnscpy;
+pub mod cgnsinf;
 pub mod cgnsmod;
 pub mod cgnspwr;
 pub mod cgnsurc;
@@ -43,8 +44,10 @@ pub mod cmgr;
 pub mod cmgs;
 pub mod cmnb;
 pub mod cnact;
+pub mod cncfg;
 pub mod cnmi;
 pub mod cnmp;
+pub mod cnsmod;
 pub mod cntp;
 pub mod cntpcid;
 pub mod cops;
@@ -91,7 +94,9 @@ pub use cmgf::{GetSmsMessageFormat, SetSmsMessageFormat, SmsMessageFormat};
 pub use cmgs::{MessageReference, SendSms};
 pub use cmnb::{NbMode, SetNbMode};
 pub use cnact::{CnactMode, SetAppNetwork};
+pub use cncfg::{PdpConfigure};
 pub use cnmp::{NetworkMode, SetNetworkMode};
+pub use cnsmod::{ShowSystemMode, SetAutoSystemMode};
 pub use cntp::{Execute, SynchronizeNetworkTime};
 pub use cntpcid::SetGprsBearerProfileId;
 pub use cops::{GetOperatorInfo, OperatorFormat, OperatorInfo, OperatorMode};
@@ -115,7 +120,7 @@ use self::{
 };
 
 #[derive(Clone, Copy, Default, Debug)]
-pub(crate) struct AtParseErr {
+pub struct AtParseErr {
     #[allow(dead_code)]
     message: &'static str,
 }
@@ -160,12 +165,15 @@ pub enum ResponseCode {
     QualityControlNumber(QualityControlNumber),
     ProductInfoImei(ProductInfoImei),
     ConfigureEDRX(ConfigureEDRX),
+    CNSMod(cnsmod::CNSMod),
     PdpContextActivation(cgact::CGact),
     NetworkApn(NetworkApn),
     NetworkTime(NetworkTime),
     DownloadInfo(DownloadInfo),
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
+    GnssWorkModeSet(cgnsmod::GnssWorkModeSet),
+    GnssReport(cgnsinf::GnssReport),
     PowerDown(unsolicited::PowerDown),
     Imei(Imei),
     SmsMessageFormat(SmsMessageFormat),
@@ -201,12 +209,15 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::QualityControlNumber))
             .or_else(parse(line, ResponseCode::ProductInfoImei))
             .or_else(parse(line, ResponseCode::ConfigureEDRX))
+            .or_else(parse(line, ResponseCode::CNSMod))
             .or_else(parse(line, ResponseCode::PdpContextActivation))
             .or_else(parse(line, ResponseCode::NetworkApn))
             .or_else(parse(line, ResponseCode::NetworkTime))
             .or_else(parse(line, ResponseCode::DownloadInfo))
             .or_else(parse(line, ResponseCode::CopyResponse))
             .or_else(parse(line, ResponseCode::XtraStatus))
+            .or_else(parse(line, ResponseCode::GnssWorkModeSet))
+            .or_else(parse(line, ResponseCode::GnssReport))
             .or_else(parse(line, ResponseCode::CclkTime))
             .or_else(parse(line, ResponseCode::PowerDown))
             // Imei is weird and may not be unambiguously parsed.

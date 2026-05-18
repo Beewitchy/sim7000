@@ -5,26 +5,27 @@ pub mod power;
 use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        At, AtRequest, BearerSettings, CharacterSet, GetPinStatus, NetworkMode,
-        SelectMessageService, SetSmsMessageFormat, SetTeCharacterSet, SmsMessageFormat, ate,
-        cbatchk, ccid,
+        At, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService,
+        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, cbatchk,
+        ccid,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
-        cgact, cgmr, cgnapn,
+        cgact, cgmr, cgnapn, cgnscold, cgnscpy, cgnsinf,
         cgnsmod::{self, WorkMode},
-        cgnspwr, cgnsurc, cgreg, cifsrex, ciicr, cipmux, cipshut,
+        cgnspwr, cgnsurc, cgnsxtra, cgreg, cifsrex, ciicr, cipmux, cipshut,
         cmee::{self, CMEErrorMode},
         cmgd::{DeleteFlag, DeleteSms},
         cmgr::{ReadSms, SmsMessage},
         cmgs::{self, SendSmsMessage},
         cmnb::{self, NbMode},
+        cnact, cncfg,
         cnmi::{SetSmsIndication, SmsIndicationMode, SmsMtMode},
-        cnmp, cops, cpowd,
+        cnmp, cntp, cntpcid, cops, cpowd,
         cpsi::{self},
-        creg, csclk, csq, cstt, gsn,
-        ifc::{self, FlowControl},
+        creg, csclk, csq, cstt, gsn, httptofs, ifc,
         ipr::{self, BaudRate},
+        sapbr,
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
     },
     gnss::Gnss,
@@ -49,6 +50,12 @@ pub struct Uninitialized;
 pub struct Disabled;
 pub struct Enabled;
 pub struct Sleeping;
+
+// todo: ellie (17.05.2026) - Implement different modem behaviors
+pub trait ModemBehavior<M: RawMutex> {
+    fn post_init(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error>;
+    fn authenticate(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error>;
+}
 
 pub struct Modem<'m, P, M: RawMutex, const N: usize> {
     context: &'m Shared<M, N>,
@@ -191,8 +198,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
+        self.power_signal.broadcast(PowerState::On);
         for retry in 0..3 {
-            self.power_signal.broadcast(PowerState::On);
+            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
             match with_timeout(
                 Duration::from_secs(retry * 5),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
@@ -202,21 +210,19 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Ok(_) => break,
                 _ => {}
             }
-            // Skip disconnect on odd retries
-            //  to handle out of sync state
-            if retry % 2 == 0 {
+            // Deactivating and rebooting seems to be often not needed,
+            //  so only try it every other attempt
+            if retry % 2 != 0 {
                 self.deactivate().await?;
             }
-            self.power_signal.broadcast(PowerState::Off);
-            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
 
         let mut commands = self.commands.lock().await;
 
         // todo: ellie (16.05.2026) - flow control configuration
         // let set_flow_control = ifc::SetFlowControl {
-        //     dce_by_dte: FlowControl::Hardware,
-        //     dte_by_dce: FlowControl::Hardware,
+        //     dce_by_dte: ifc::FlowControl::Hardware,
+        //     dte_by_dce: ifc::FlowControl::Hardware,
         // };
 
         // // Turn on hardware flow control, the modem does not save this state on reboot.
@@ -267,35 +273,26 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
-        // todo: ellie (16.05.2026) - Ri interrupt pin config
+        // todo: ellie (16.05.2026) - Ri interrupt pin & bat check config
         commands.run(cfgri::ConfigureRiPin(RiPinMode::Off)).await?;
         commands.run(cbatchk::EnableVBatCheck(false)).await?;
 
+        // TODO: SIM7000
         // let current_edrx = commands
         //     .run(cedrxs::GetEDRXSetting)
         //     .await
         //     .ok()
         //     .map(|(current_edrx, _)| current_edrx);
 
-        // let edrx_required = !matches!(config.edrx, EDRXConfig::Disabled);
         // let configure_edrx = cedrxs::ConfigureEDRX::from(config.edrx);
         // if current_edrx.is_none_or(|current_edrx| current_edrx != configure_edrx) {
-        //     let result = try_retry!(
+        //     try_retry!(
         //         ("CEDRX", 5, Duration::from_millis(200)),
         //         commands.run(configure_edrx).await
-        //     );
-        //     if edrx_required {
-        //         let _ = result?;
-        //     } else {
-        //         // Failure is fine, this mode isn't necessarily supported
-        //         let _ = result;
-        //     }
+        //     )?;
         // }
 
         drop(commands);
-
-        // log::info!("modem successfully initialized, turning it back off...");
-        // self.deactivate().await?;
 
         embassy_time::Timer::after_secs(2).await;
 
@@ -343,8 +340,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(())
     }
 
-    pub fn set_apn(&mut self, apn: heapless::String<63>) {
-        self.apn = Some(apn);
+    pub fn set_apn(&mut self, apn: Option<heapless::String<63>>) {
+        self.apn = apn;
     }
 
     pub fn set_ap_username(&mut self, ap_username: &'static str) {
@@ -376,9 +373,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Ok(_) => break,
                 _ => {}
             }
-            // Skip disconnect on odd retries
-            //  to handle out of sync state
-            if retry % 2 == 0 {
+            // Deactivating and rebooting seems to be often not needed,
+            //  so only try it every other attempt
+            if retry % 2 != 0 {
                 self.deactivate().await?;
             }
             self.power_signal.broadcast(PowerState::Off);
@@ -388,8 +385,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let mut commands = self.commands.lock().await;
 
         // let set_flow_control = ifc::SetFlowControl {
-        //     dce_by_dte: FlowControl::Hardware,
-        //     dte_by_dce: FlowControl::Hardware,
+        //     dce_by_dte: ifc::FlowControl::Hardware,
+        //     dte_by_dce: ifc::FlowControl::Hardware,
         // };
 
         // for _ in 0..5 {
@@ -454,7 +451,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     .expect("we just removed an element");
             }
         } else {
-            for _ in 0..self.reg_retries+1 {
+            for _ in 0..self.reg_retries + 1 {
                 let _ = commands.run(cgreg::GetRegistrationStatus).await;
                 match self.wait_for_registration().await {
                     Ok(_) => break,
@@ -463,11 +460,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 embassy_time::Timer::after_secs(2).await;
             }
         }
-        commands.run(cgact::GetPdpContextActivation).await?;
+        let (_pdp_states, _) = commands.run(cgact::GetPdpContextActivation).await?;
         log::info!("registered to network");
 
-        // ignore error--not important
-        let _ = commands.run(cipshut::ShutConnections).await;
+        // TODO: SIM7000
+        // commands.run(cipshut::ShutConnections).await?;
 
         let apn = match &self.apn {
             Some(apn) => apn,
@@ -484,14 +481,34 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         log::info!("authenticating with apn {:?}", apn);
 
-        let _ = commands.run(cipmux::EnableMultiIpConnection(true)).await;
         commands
-            .run(cstt::StartTask {
-                apn: apn.clone(),
+            .run(cncfg::PdpConfigure {
+                apn: self.apn.as_ref().ok_or(Error::NoApn)?.clone(),
                 username: self.ap_username.try_into().unwrap_or_default(),
                 password: self.ap_password.try_into().unwrap_or_default(),
             })
             .await?;
+
+        commands
+            .run(cnact::SetAppNetworkPDP {
+                pdp_index: 0,
+                mode: cnact::CnactMode::Active,
+                address: None,
+            })
+            .await?;
+
+        let _ = commands.run(ShowSystemMode).await?;
+
+        // todo: ellie (17.05.2026) - different command set compatibility
+        // TODO: SIM7000
+        // let _ = commands.run(cipmux::EnableMultiIpConnection(true)).await;
+        // commands
+        //     .run(cstt::StartTask {
+        //         apn: apn.clone(),
+        //         username: self.ap_username.try_into().unwrap_or_default(),
+        //         password: self.ap_password.try_into().unwrap_or_default(),
+        //     })
+        //     .await?;
 
         // datasheet specifies 85 seconds max response time
         // commands
@@ -522,7 +539,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         for mode in &self.current_network_priority {
             // Sometimes SIM isn't detected--cycle it to try
             // get it working
-            for retry in 0..self.reg_retries+1 {
+            for retry in 0..self.reg_retries + 1 {
                 match mode {
                     RadioAccessTechnology::LteCatM1 => {
                         commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
@@ -719,38 +736,84 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         .await
     }
 
-    pub async fn claim_gnss(&mut self) -> Result<Option<Gnss<'m, M>>, Error> {
+    /// Start gnss & enable the work-modes for the given systems
+    ///
+    /// The work mode priority list will be used to select either the first available or next
+    ///  available system, based on the current settings.
+    pub async fn claim_gnss(
+        &mut self,
+        work_mode_priority: &WorkModePriority<GnssSystem, 4>,
+    ) -> Result<Option<Gnss<'_, 'm, M>>, Error> {
         let Some(reports) = self.context.gnss_slot.claim() else {
             return Ok(None);
         };
 
-        self.commands
-            .lock()
-            .await
-            .run(cgnspwr::SetGnssPower(true))
-            .await?;
+        let mut commands = self.commands.lock().await;
 
-        self.commands
-            .lock()
-            .await
+        commands.run(cgnspwr::SetGnssPower(true)).await?;
+
+        commands
             .run(cgnsurc::ConfigureGnssUrc {
                 period: 4, // TODO
             })
             .await?;
 
-        // Galilean seems to be off by default
-        self.commands
-            .lock()
-            .await
-            .run(cgnsmod::SetGnssWorkModeSet {
-                glonass: WorkMode::Start,
-                beidou: WorkMode::Start,
-                galilean: WorkMode::Start,
-            })
+        let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
+
+        let allow_multiple = (current_set.glonass as u8
+            + current_set.beidou as u8
+            + current_set.galilean as u8
+            + current_set.qzss.unwrap_or(WorkMode::Stop) as u8)
+            > 1;
+
+        let mut workmode_set = cgnsmod::GnssWorkModeSet {
+            glonass: WorkMode::Stop,
+            beidou: WorkMode::Stop,
+            galilean: WorkMode::Stop,
+            qzss: current_set.qzss.map(|_| WorkMode::Stop),
+        };
+        for system in &work_mode_priority.list {
+            match system {
+                GnssSystem::Galileo => {
+                    if matches!(work_mode_priority.selection, SelectionMode::First)
+                        || current_set.galilean == cgnsmod::WorkMode::Stop
+                    {
+                        workmode_set.galilean = WorkMode::Start;
+                    }
+                }
+                GnssSystem::BeiDou => {
+                    if matches!(work_mode_priority.selection, SelectionMode::First)
+                        || current_set.beidou == cgnsmod::WorkMode::Stop
+                    {
+                        workmode_set.beidou = WorkMode::Start;
+                    }
+                }
+                GnssSystem::GLONASS => {
+                    if matches!(work_mode_priority.selection, SelectionMode::First)
+                        || current_set.glonass == cgnsmod::WorkMode::Stop
+                    {
+                        workmode_set.glonass = WorkMode::Start;
+                    }
+                }
+                GnssSystem::QZSS => {
+                    if matches!(work_mode_priority.selection, SelectionMode::First)
+                        || current_set.qzss == Some(cgnsmod::WorkMode::Stop)
+                    {
+                        workmode_set.qzss = Some(WorkMode::Start);
+                    }
+                }
+            }
+            if !allow_multiple {
+                break;
+            }
+        }
+        commands
+            .run(cgnsmod::SetGnssWorkModeSet(Some(workmode_set)))
             .await?;
 
         Ok(Some(Gnss::new(
             reports,
+            &self.commands,
             self.context.power_signal.subscribe(),
             &self.context.drop_channel,
             Duration::from_secs(20),
@@ -759,57 +822,66 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     /// Sync the network time protocol
     pub async fn sync_ntp(&mut self, ntp_server: &str, timezone: u16) -> Result<(), Error> {
-        let apn = self.apn.as_ref().ok_or(Error::NoApn)?.clone();
-
         let mut commands = self.commands.lock().await;
 
+        // TODO: SIM7000
+        // let apn = self.apn.as_ref().ok_or(Error::NoApn)?.clone();
+        // commands
+        //     .run(sapbr::BearerSettings {
+        //         cmd_type: sapbr::CmdType::SetBearerParameters,
+        //         con_param_type: sapbr::ConParamType::Apn,
+        //         apn: apn.clone(),
+        //     })
+        //     .await?;
+        // commands
+        //     .run(sapbr::BearerSettings {
+        //         cmd_type: sapbr::CmdType::OpenBearer,
+        //         con_param_type: sapbr::ConParamType::Apn,
+        //         apn,
+        //     })
+        //     .await?;
+        // commands
+        //     .run(cntpcid::SetGprsBearerProfileId(1))
+        //     .await?;
+
         commands
-            .run(BearerSettings {
-                cmd_type: crate::at_command::CmdType::SetBearerParameters,
-                con_param_type: crate::at_command::ConParamType::Apn,
-                apn: apn.clone(),
-            })
-            .await?;
-        commands
-            .run(BearerSettings {
-                cmd_type: crate::at_command::CmdType::OpenBearer,
-                con_param_type: crate::at_command::ConParamType::Apn,
-                apn,
-            })
-            .await?;
-        commands
-            .run(crate::at_command::cntpcid::SetGprsBearerProfileId(1))
-            .await?;
-        commands
-            .run(crate::at_command::cntp::SynchronizeNetworkTime {
+            .run(cntp::SynchronizeNetworkTime {
                 ntp_server: ntp_server.try_into().unwrap_or_default(),
                 timezone,
                 cid: 1,
             })
             .await?;
-        commands.run(crate::at_command::cntp::Execute).await?;
+        commands.run(cntp::Execute).await?;
 
         Ok(())
     }
 
-    /// According to docs, you should first [Modem::sync_ntp]
     pub async fn download_xtra(&mut self, url: &str) -> Result<(), Error> {
-        self.commands
-            .lock()
-            .await
-            .run(crate::at_command::cnact::SetAppNetwork {
-                mode: crate::at_command::cnact::CnactMode::Active,
-                apn: self.apn.as_ref().ok_or(Error::NoApn)?.clone(),
+        let mut commands = self.commands.lock().await;
+
+        let _ = commands.run(cntp::EnableLocalTimestamp(true)).await?;
+
+        commands
+            .run(cnact::SetAppNetworkPDP {
+                pdp_index: 0,
+                mode: cnact::CnactMode::Active,
+                address: None,
             })
             .await?;
+
+        // TODO: SIM7000
+        // commands
+        //     .run(cnact::SetAppNetwork {
+        //         mode: cnact::CnactMode::Active,
+        //         apn: self.apn.as_ref().ok_or(Error::NoApn)?.clone(),
+        //     })
+        //     .await?;
 
         // sometimes we aren't able to download the file the first couple of times
         try_retry!(
             ("download xtra", 5, Duration::from_millis(200)),
-            self.commands
-                .lock()
-                .await
-                .run(crate::at_command::httptofs::DownloadToFileSystem {
+            commands
+                .run(httptofs::DownloadToFileSystem {
                     // unclear which xtra file to use, the size differs depending on server
                     // so they might contain more/different data or different satellite networks
                     // also, sometimes the server is scuffed
@@ -828,28 +900,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Before calling this function, make sure the XTRA file has been downloaded. [Modem::download_xtra]
     pub async fn cold_start_with_xtra(&mut self) -> Result<(), Error> {
-        self.commands
-            .lock()
-            .await
-            .run(crate::at_command::cgnscpy::CopyXtraFile)
-            .await?
-            .0
-            .success()?;
-        self.commands
-            .lock()
-            .await
-            .run(crate::at_command::cgnsxtra::GnssXtra(
-                crate::at_command::cgnsxtra::ToggleXtra::Enable,
-            ))
+        let mut commands = self.commands.lock().await;
+
+        commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
+        commands
+            .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
             .await?;
 
-        self.commands
-            .lock()
-            .await
-            .run(crate::at_command::cgnscold::GnssColdStart)
-            .await?
-            .1
-            .success()?;
+        commands.run(cgnscold::GnssColdStart).await?.1.success()?;
 
         Ok(())
     }
@@ -1089,4 +1147,27 @@ impl From<EDRXConfig> for cedrxs::ConfigureEDRX {
             },
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GnssSystem {
+    Galileo,
+    BeiDou,
+    GLONASS,
+    QZSS,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SelectionMode {
+    First,
+    Next,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct WorkModePriority<T, const N: usize> {
+    pub list: heapless::Vec<T, N>,
+    pub selection: SelectionMode,
 }

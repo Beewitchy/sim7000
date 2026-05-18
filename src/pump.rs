@@ -117,7 +117,7 @@ where
                     return Ok(());
                 }
                 Urc::PowerDown(PowerDown::Normal) => {
-                    // Normal power down isn't an unsolicited response
+                    // Normal power down isn't an unsolicited response but it's parsed here
                     let mut buf =
                         with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
                     *buf = ResponseCode::PowerDown(PowerDown::Normal);
@@ -142,8 +142,8 @@ where
                 }
                 _ => log::warn!("Unhandled URC: {:?}", message),
             }
-        }
-        if let Ok(mut response) = ResponseCode::from_line(&line) {
+            Ok(())
+        } else if let Ok(mut response) = ResponseCode::from_line(&line) {
             // If it's not a URC, try to parse it as a regular response code
 
             // Sms messages are a bit of a special case,
@@ -165,13 +165,13 @@ where
                 with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
             *buf = response;
             buf.send_done();
-            return Ok(());
+            Ok(())
         } else {
             // The modem likely sent us gibberish we could not understand.
             // TODO: We might want to trigger a reboot when the modem starts acting like this.
             log::debug!("Got unknown response: {:?}", line);
+            Err(Error::UnknownResponse)
         }
-        Err(Error::UnknownResponse)
     }
 }
 

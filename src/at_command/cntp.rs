@@ -22,7 +22,9 @@ impl AtRequest for SynchronizeNetworkTime {
         write!(
             buf,
             "AT+CNTP=\"{}\",{},{}\r",
-            self.ntp_server.as_str(), self.timezone, self.cid
+            self.ntp_server.as_str(),
+            self.timezone,
+            self.cid
         )
     }
 }
@@ -81,5 +83,21 @@ impl AtResponse for NetworkTime {
             ResponseCode::NetworkTime(v) => Some(v),
             _ => None,
         }
+    }
+}
+
+/// AT+CLTS=...
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EnableLocalTimestamp(pub bool);
+
+impl AtRequest for EnableLocalTimestamp {
+    type Response = GenericOk;
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        let param = match self.0 {
+            false => '0',
+            true => '1',
+        };
+        write!(buf, "AT+CLTS={}", param)
     }
 }

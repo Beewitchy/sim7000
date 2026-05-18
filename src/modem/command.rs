@@ -6,10 +6,7 @@ use core::{
 };
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    zerocopy_channel::{
-        ReceiveSlot, Receiver as ZerocopyReceiver,
-        Sender as ZerocopySender,
-    },
+    zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
 use embassy_time::{Duration, TimeoutError, with_timeout};
 use heapless::{String, Vec};
@@ -240,6 +237,43 @@ where
         }
     }
 
+    /// Wait for the modem to return either of two response types.
+    pub async fn expect_either_response<T1: AtResponse, T2: AtResponse>(
+        &mut self,
+    ) -> Result<
+        embassy_futures::select::Either<
+            MappedReceiveSlotRef<'_, M, T1, ResponseCode>,
+            MappedReceiveSlotRef<'_, M, T2, ResponseCode>,
+        >,
+        Error,
+    > {
+        use embassy_futures::select::Either;
+        loop {
+            let response = self.responses.receive();
+            let response = if let Some(timeout) = self.timeout {
+                with_timeout(timeout, response).await?
+            } else {
+                response.await
+            };
+            let response = ReceiveSlotRef::new(response);
+            match ReceiveSlotRef::filter_map(response, |response| T1::from_generic(response)) {
+                Ok(response) => return Ok(Either::First(response)),
+                Err(response) => match ReceiveSlotRef::filter_map(response, |response| T2::from_generic(response)) {
+                    Ok(response) => return Ok(Either::Second(response)),
+                    Err(err) =>
+                    match &*err {
+                        ResponseCode::Error(error) => return Err(Error::Sim(*error)),
+                        unexpected_response => {
+                            // TODO: we might want to make this a hard error, if/when we feel confident in
+                            // how both the driver and the modem behaves
+                            log::warn!("Got unexpected ATResponse: {:?}", unexpected_response)
+                        }
+                    }
+                }
+            };
+        }
+    }
+
     /// Send raw bytes to the modem, use with care.
     pub async fn send_bytes(&mut self, bytes: &[u8]) {
         let mut bytes = bytes;
@@ -300,6 +334,10 @@ where
 ///
 /// In order to support AtRequest::Response being a tuple of arbitrary size, we
 /// implement the ExpectResponse trait for tuples with as many member as we need.
+///
+/// Also to support variable length response sequences, there is a specialization
+/// tuples matching (heapless::Vec<T1, N>, T2) which will parse 0..N T1 responses
+/// until a T2 response is encountered.
 pub trait ExpectResponse<M: RawMutex>: Sized {
     fn expect(runner: &mut CommandRunner<'_, M>) -> impl Future<Output = Result<Self, Error>>;
 }
@@ -332,8 +370,15 @@ impl<T: AtResponse + Clone, Y: AtResponse + Clone, Z: AtResponse + Clone, M: Raw
     }
 }
 
-impl<T1: AtResponse + Clone, T2: AtResponse + Clone, T3: AtResponse + Clone, T4: AtResponse + Clone, T5: AtResponse + Clone, T6: AtResponse + Clone, M: RawMutex>
-    ExpectResponse<M> for (T1, T2, T3, T4, T5, T6,)
+impl<
+    T1: AtResponse + Clone,
+    T2: AtResponse + Clone,
+    T3: AtResponse + Clone,
+    T4: AtResponse + Clone,
+    T5: AtResponse + Clone,
+    T6: AtResponse + Clone,
+    M: RawMutex,
+> ExpectResponse<M> for (T1, T2, T3, T4, T5, T6)
 {
     async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
         let r1 = <T1 as ExpectResponse<M>>::expect(runner).await?;
@@ -342,6 +387,26 @@ impl<T1: AtResponse + Clone, T2: AtResponse + Clone, T3: AtResponse + Clone, T4:
         let r4 = <T4 as ExpectResponse<M>>::expect(runner).await?;
         let r5 = <T5 as ExpectResponse<M>>::expect(runner).await?;
         let r6 = <T6 as ExpectResponse<M>>::expect(runner).await?;
-        Ok((r1, r2, r3, r4, r5, r6,))
+        Ok((r1, r2, r3, r4, r5, r6))
+    }
+}
+
+impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usize>
+    ExpectResponse<M> for (heapless::Vec<T, N>, DoneT)
+{
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        let mut response_vec = heapless::Vec::new();
+        let done_response = loop {
+            match runner.expect_either_response::<T, DoneT>()
+            .await
+            {
+                Ok(embassy_futures::select::Either::First(item)) => response_vec
+                    .push(item.clone())
+                    .map_err(|_| Error::BufferOverflow)?,
+                Ok(embassy_futures::select::Either::Second(done)) => break done.clone(),
+                Err(err) => return Err(err),
+            }
+        };
+        Ok((response_vec, done_response))
     }
 }

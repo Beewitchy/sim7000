@@ -1,12 +1,13 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use futures::{select_biased, FutureExt};
+use futures::{FutureExt, select_biased};
 
-use crate::at_command::unsolicited::{GnssFix, GnssReport};
+use crate::at_command::{cgnsinf, unsolicited::{GnssFix, GnssReport}};
 use crate::drop::{AsyncDrop, DropChannel, DropMessage};
+use crate::modem::CommandRunner;
 use crate::modem::power::PowerSignalListener;
-use crate::{log, PowerState};
+use crate::{PowerState, log};
 
 pub const GNSS_SLOTS: usize = 1;
 
@@ -14,27 +15,33 @@ pub const GNSS_SLOTS: usize = 1;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Closed;
 
-pub struct Gnss<'c, M: RawMutex> {
+pub struct Gnss<'x, 'c, M: RawMutex> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
-    reports: Option<&'c Signal<M, GnssReport>>,
-    power_signal: PowerSignalListener<'c, M>,
-    _drop: AsyncDrop<'c, M>,
+    reports: Option<&'x Signal<M, GnssReport>>,
+    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
+    power_signal: PowerSignalListener<'x, M>,
+    _drop: AsyncDrop<'x, M>,
 
     /// The timeout value for waiting for a report.
     timeout: Duration,
 }
 
-impl<'c, M> Gnss<'c, M> where M: RawMutex {
+impl<'x, 'c, M> Gnss<'x, 'c, M>
+where
+    M: RawMutex,
+{
     pub(crate) fn new(
-        reports: &'c Signal<M, GnssReport>,
-        power_signal: PowerSignalListener<'c, M>,
-        drop_channel: &'c DropChannel<M>,
+        reports: &'x Signal<M, GnssReport>,
+        commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
+        power_signal: PowerSignalListener<'x, M>,
+        drop_channel: &'x DropChannel<M>,
         timeout: Duration,
     ) -> Self {
         Gnss {
             reports: Some(reports),
+            commands,
             power_signal,
             _drop: AsyncDrop::new(drop_channel, DropMessage::Gnss),
             timeout,
@@ -43,6 +50,9 @@ impl<'c, M> Gnss<'c, M> where M: RawMutex {
 
     /// Wait until the next GNSS report.
     pub async fn get_report(&mut self) -> Result<GnssReport, Closed> {
+        // TODO: SIM7000
+        self.commands.lock().await.run(cgnsinf::GetGnssReport).await.map_err(|_| Closed)?;
+
         let reports = self.reports.ok_or(Closed)?;
         select_biased! {
             report = reports.wait().fuse() => Ok(report),

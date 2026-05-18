@@ -1,4 +1,6 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use core::str::FromStr as _;
+
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, CnactMode};
 
 
 /// AT+CGACT?
@@ -7,8 +9,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
-    // The actual response is generated as an URC
-    type Response = (CGact, CGact, GenericOk);
+    type Response = (heapless::Vec<CGact, 3>, GenericOk);
 
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGACT?\r")
@@ -19,7 +20,15 @@ impl AtRequest for GetPdpContextActivation {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CGact {
     pub cid: u8,
-    pub state: u8,
+    pub state: CnactMode,
+}
+
+impl AtRequest for CGact {
+    type Response = (heapless::Vec<CGact, 3>, GenericOk);
+
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGACT={},{}\r", self.cid, self.state as u8)
+    }
 }
 
 impl AtParseLine for CGact {
@@ -27,13 +36,13 @@ impl AtParseLine for CGact {
         let line = line.strip_prefix("+CGACT:").ok_or_else(|| AtParseErr::from("no match"))?;
         let mut cgact = Self {
             cid: 0,
-            state: 0,
+            state: CnactMode::Deactive,
         };
         for (i, part) in line.split(',').enumerate() {
             let part = part.trim();
             match i {
-                0 => cgact.cid = u8::from_str_radix(part, 10).map_err(|_| "invalid value")?,
-                1 => cgact.state = u8::from_str_radix(part, 10).map_err(|_| "invalid value")?,
+                0 => cgact.cid = u8::from_str(part).map_err(|_| "invalid value")?,
+                1 => cgact.state = CnactMode::from_str(part).map_err(|_| "invalid value")?,
                 _ => {}
             }
         }
