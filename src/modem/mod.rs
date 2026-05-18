@@ -201,14 +201,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         self.power_signal.broadcast(PowerState::On);
         for retry in 0..3 {
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
-            match with_timeout(
+            if with_timeout(
                 Duration::from_secs(retry * 5),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
             )
-            .await
-            {
-                Ok(_) => break,
-                _ => {}
+            .await.is_ok() {
+                break;
+            }
+            if self.commands.lock().await.run(At).await.is_ok() {
+                break;
             }
             // Deactivating and rebooting seems to be often not needed,
             //  so only try it every other attempt
@@ -400,7 +401,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         // }
         commands.run(ate::SetEcho(false)).await?;
         commands
-            .run(cmee::ConfigureCMEErrors(CMEErrorMode::Verbose))
+            .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
             .await?;
 
         let _ = with_timeout(Duration::from_secs(30), self.wait_for_sim(&mut commands))
@@ -752,11 +753,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         commands.run(cgnspwr::SetGnssPower(true)).await?;
 
-        commands
-            .run(cgnsurc::ConfigureGnssUrc {
-                period: 4, // TODO
-            })
-            .await?;
+        // TODO: SIM7000
+        // commands
+        //     .run(cgnsurc::ConfigureGnssUrc {
+        //         period: 4, // TODO
+        //     })
+        //     .await?;
 
         let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
 

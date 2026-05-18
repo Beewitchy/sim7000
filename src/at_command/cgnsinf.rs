@@ -48,7 +48,7 @@ pub struct GetGnssReport;
 impl AtRequest for GetGnssReport {
     type Response = (GnssReport, GenericOk);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSINF?\r")
+        write!(buf, "AT+CGNSINF\r")
     }
 }
 
@@ -85,7 +85,7 @@ impl AtParseLine for GnssReport {
                 let utc = {
                     use chrono::format::{Fixed, Item, Numeric, Pad};
                     let mut parsed = Default::default();
-                    chrono::format::parse(
+                    let _ = chrono::format::parse(
                         &mut parsed,
                         utc,
                         [
@@ -99,7 +99,7 @@ impl AtParseLine for GnssReport {
                         ]
                         .into_iter(),
                     );
-                    parsed.set_offset(0);
+                    let _ = parsed.set_offset(0);
                     parsed.to_datetime_with_timezone(&chrono::Utc).ok()
                 };
                 #[cfg(not(feature = "chrono"))]
