@@ -24,7 +24,7 @@ pub struct SignalQuality {
 
 impl AtParseLine for SignalQuality {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CSQ: ").ok_or("Missing '+CSG: '")?;
+        let line = line.strip_prefix("+CSQ:").ok_or("Missing '+CSG: '")?.trim();
         let (rssi, ber) = line.split_once(',').ok_or("Missing ','")?;
         let rssi: u8 = rssi.parse()?;
         let ber: u8 = ber.parse()?;

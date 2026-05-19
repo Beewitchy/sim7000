@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
 
 /// AT+CNTP=...
 #[derive(Debug)]
@@ -51,15 +51,21 @@ pub enum SyncNtpStatusCode {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkTime {
     pub code: SyncNtpStatusCode,
-    pub time: Option<String<32>>,
+    #[cfg(feature = "chrono")]
+    pub time: Option<chrono::DateTime<chrono::Utc>>,
+    #[cfg(not(feature = "chrono"))]
+    pub time: Option<super::unsolicited::DateTime>,
 }
 
 impl AtParseLine for NetworkTime {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CNTP: ").ok_or("Missing '+CNTP: '")?;
+        let line = line
+            .strip_prefix("+CNTP:")
+            .ok_or("Missing '+CNTP:'")?
+            .trim();
 
         let (code, time) = match line.split_once(',') {
-            Some((code, time)) => (code, Some(time.try_into().unwrap_or_default())),
+            Some((code, time)) => (code, cclk::parse_18char_str(time)),
             None => (line, None),
         };
 
@@ -98,6 +104,6 @@ impl AtRequest for EnableLocalTimestamp {
             false => '0',
             true => '1',
         };
-        write!(buf, "AT+CLTS={}", param)
+        write!(buf, "AT+CLTS={}\r", param)
     }
 }

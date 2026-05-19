@@ -7,13 +7,13 @@ use crate::{
     at_command::{
         At, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService,
         SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, cbatchk,
-        ccid,
+        ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
-        cgact, cgmr, cgnapn, cgnscold, cgnscpy, cgnsinf,
+        cfun, cgact, cgmr, cgnapn, cgnscold, cgnscpy,
         cgnsmod::{self, WorkMode},
-        cgnspwr, cgnsurc, cgnsxtra, cgreg, cifsrex, ciicr, cipmux, cipshut,
+        cgnspwr, cgnsurc, cgnsxtra, cgreg,
         cmee::{self, CMEErrorMode},
         cmgd::{DeleteFlag, DeleteSms},
         cmgr::{ReadSms, SmsMessage},
@@ -23,9 +23,8 @@ use crate::{
         cnmi::{SetSmsIndication, SmsIndicationMode, SmsMtMode},
         cnmp, cntp, cntpcid, cops, cpowd,
         cpsi::{self},
-        creg, csclk, csq, cstt, gsn, httptofs, ifc,
+        creg, csclk, csq, gsn, httptofs,
         ipr::{self, BaudRate},
-        sapbr,
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
     },
     gnss::Gnss,
@@ -114,6 +113,7 @@ pub enum ReadyState {
     #[default]
     None,
     Ready,
+    SmsReady,
     PowerDown,
 }
 
@@ -181,6 +181,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             voltage_warning: context.shared.voltage_slot.peek(),
             ready: context.shared.ready.sender(),
             sms_indices: context.shared.sms_indices.sender(),
+            pdp_status: context.shared.pdp_status.sender(),
         };
 
         let tx_pump = TxPump {
@@ -205,7 +206,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Duration::from_secs(retry * 5),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
             )
-            .await.is_ok() {
+            .await
+            .is_ok()
+            {
                 break;
             }
             if self.commands.lock().await.run(At).await.is_ok() {
@@ -409,7 +412,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .map_err(|_| Error::SimUnavailable)?;
 
         let _ = commands
-            .run(cgreg::SetFunctionality(cgreg::Functionality::Full, None))
+            .run(cfun::SetFunctionality(cfun::Functionality::Full, None))
             .await?;
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
@@ -491,11 +494,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .await?;
 
         commands
-            .run(cnact::SetAppNetworkPDP {
+            .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
                 pdp_index: 0,
                 mode: cnact::CnactMode::Active,
                 address: None,
-            })
+            }))
             .await?;
 
         let _ = commands.run(ShowSystemMode).await?;
@@ -737,6 +740,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         .await
     }
 
+    pub async fn configure_gnss_background(&mut self) -> Result<(), Error> {
+        let mut commands = self.commands.lock().await;
+        commands
+            .run(cgnsurc::ConfigureGnssUrc {
+            period: 4, // TODO
+        })
+            .await?;
+        Ok(())
+    }
+
     /// Start gnss & enable the work-modes for the given systems
     ///
     /// The work mode priority list will be used to select either the first available or next
@@ -752,13 +765,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let mut commands = self.commands.lock().await;
 
         commands.run(cgnspwr::SetGnssPower(true)).await?;
-
-        // TODO: SIM7000
-        // commands
-        //     .run(cgnsurc::ConfigureGnssUrc {
-        //         period: 4, // TODO
-        //     })
-        //     .await?;
 
         let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
 
@@ -823,8 +829,20 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     /// Sync the network time protocol
-    pub async fn sync_ntp(&mut self, ntp_server: &str, timezone: u16) -> Result<(), Error> {
+    pub async fn sync_ntp(
+        &mut self,
+        ntp_server: &str,
+        timezone: u16,
+    ) -> Result<cntp::NetworkTime, Error> {
         let mut commands = self.commands.lock().await;
+
+        commands
+            .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
+                pdp_index: 1,
+                mode: cnact::CnactMode::Active,
+                address: None,
+            }))
+            .await?;
 
         // TODO: SIM7000
         // let apn = self.apn.as_ref().ok_or(Error::NoApn)?.clone();
@@ -842,9 +860,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //         apn,
         //     })
         //     .await?;
-        // commands
-        //     .run(cntpcid::SetGprsBearerProfileId(1))
-        //     .await?;
+
+        commands.run(cntpcid::SetGprsBearerProfileId(1)).await?;
 
         commands
             .run(cntp::SynchronizeNetworkTime {
@@ -853,22 +870,56 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 cid: 1,
             })
             .await?;
-        commands.run(cntp::Execute).await?;
+        let (_, network_time) = commands
+            .run_with_timeout(Some(Duration::from_secs(60)), cntp::Execute)
+            .await?;
 
-        Ok(())
+        commands
+            .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
+                pdp_index: 1,
+                mode: cnact::CnactMode::Deactive,
+                address: None,
+            }))
+            .await?;
+
+        Ok(network_time)
+    }
+
+    pub async fn query_local_time(&mut self) -> Result<cclk::UtcTime, Error> {
+        self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime::new())
+            .await
+            .map(|(utc, _)| utc.time)
     }
 
     pub async fn download_xtra(&mut self, url: &str) -> Result<(), Error> {
         let mut commands = self.commands.lock().await;
 
-        let _ = commands.run(cntp::EnableLocalTimestamp(true)).await?;
-
-        commands
-            .run(cnact::SetAppNetworkPDP {
-                pdp_index: 0,
-                mode: cnact::CnactMode::Active,
-                address: None,
+        let (status, _) = commands.run(cnact::GetAppNetworkPDP).await?;
+        let activate_pdp = !status
+            .into_iter()
+            .find_map(|item| {
+                if item.pdp_index == 0 {
+                    Some(matches!(item.mode, cnact::CnactMode::Active))
+                } else {
+                    None
+                }
             })
+            .unwrap_or(false);
+        if activate_pdp {
+            commands
+                .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
+                    pdp_index: 0,
+                    mode: cnact::CnactMode::Active,
+                    address: None,
+                }))
+                .await?;
+        }
+
+        let _ = commands
+            .run_with_timeout(
+                Some(Duration::from_secs(30)),
+                cntp::EnableLocalTimestamp(true),
+            )
             .await?;
 
         // TODO: SIM7000
@@ -880,22 +931,42 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //     .await?;
 
         // sometimes we aren't able to download the file the first couple of times
+        let retry_count = 5;
+        let timeout = 50;
+        let command_timeout = Some(Duration::from_secs(retry_count as u64 * timeout as u64 + 1));
         try_retry!(
-            ("download xtra", 5, Duration::from_millis(200)),
+            ("download xtra", 3, Duration::from_millis(200)),
             commands
-                .run(httptofs::DownloadToFileSystem {
-                    // unclear which xtra file to use, the size differs depending on server
-                    // so they might contain more/different data or different satellite networks
-                    // also, sometimes the server is scuffed
-                    url: url.try_into().unwrap_or_default(),
-                    file_path: "/customer/xtra3grc.bin".try_into().unwrap_or_default(),
-                })
+                .run_with_timeout(
+                    command_timeout,
+                    httptofs::DownloadToFileSystem {
+                        // unclear which xtra file to use, the size differs depending on server
+                        // so they might contain more/different data or different satellite networks
+                        // also, sometimes the server is scuffed
+                        url: url.try_into().unwrap_or_default(),
+                        file_path: "/customer/xtra3grc.bin".try_into().unwrap_or_default(),
+                        retry_count: Some(retry_count),
+                        timeout: Some(timeout)
+                    }
+                )
                 .await?
                 .1
                 .status_code
                 .success()
         )
-        .map_err(Error::Httptofs)
+        .map_err(Error::Httptofs)?;
+
+        if activate_pdp {
+            commands
+                .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
+                    pdp_index: 0,
+                    mode: cnact::CnactMode::Deactive,
+                    address: None,
+                }))
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to assisted gps.
@@ -945,8 +1016,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     pub async fn query_system_info(&mut self) -> Result<cpsi::SystemInfo, Error> {
-        let (info, _) = self.commands.lock().await.run(cpsi::GetSystemInfo).await?;
-        Ok(info)
+        self.run_command(cpsi::GetSystemInfo)
+            .await
+            .map(|(system_info, _)| system_info)
     }
 
     pub async fn query_signal(&mut self) -> Result<csq::SignalQuality, Error> {
@@ -963,6 +1035,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         self.run_command_with_timeout(Some(Duration::from_secs(121)), cops::GetOperatorInfo)
             .await
             .map(|(response, _)| response)
+    }
+
+    pub async fn query_ip(&mut self) -> Result<heapless::Vec<cnact::CNActPDP, 4>, Error> {
+        try_retry!(
+            ("CNACT", 5, Duration::from_millis(500)),
+            self.run_command_with_timeout(Some(Duration::from_secs(1)), cnact::GetAppNetworkPDP)
+                .await
+        )
+        .map(|(response, _)| response)
     }
 
     pub async fn query_iccid(&mut self) -> Result<ccid::Iccid, Error> {

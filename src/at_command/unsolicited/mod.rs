@@ -29,7 +29,7 @@ mod sms_ready;
 mod ugnsinf;
 mod voltage_warning;
 
-pub use app_pdp::AppNetworkActive;
+pub use app_pdp::{AppNetworkActive};
 pub use cbm::Cbm;
 pub use cds::Cds;
 pub use cfun::CFun;

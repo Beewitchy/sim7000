@@ -30,12 +30,29 @@ impl<'c, M: RawMutex> PacketChannels<'c, M> {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct AppNetworkMap {
+    pub status: heapless::LinearMap<u8, bool, 3>,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for AppNetworkMap {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "AppNetworkMap {{ ");
+        for (k, v) in &self.status {
+            defmt::write!(fmt, "{}: {}, ", k, v);
+        }
+        defmt::write!(fmt, "}}");
+    }
+}
+
 pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) power_signal: PowerSignal<M>,
     pub(crate) drop_channel: DropChannel<M>,
     pub(crate) sms_indices: Channel<M, NewSmsIndex, 5>,
     pub(crate) sms_state: Signal<M, SmsState>,
     pub(crate) ready: Watch<M, ReadyState, 1>,
+    pub(crate) pdp_status: Watch<M, AppNetworkMap, 1>,
     pub(crate) registration_events: StateSignal<M, NetworkRegistration>,
     pub(crate) tcp: TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
@@ -57,6 +74,7 @@ impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS> where M: RawMutex {
             sms_indices: Channel::new(),
             sms_state: Signal::new(),
             ready: Watch::new_with(ReadyState::None),
+            pdp_status: Watch::new(),
             registration_events: StateSignal::new(NetworkRegistration {
                 status: RegistrationStatus::Unknown,
                 lac: None,

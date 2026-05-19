@@ -1,26 +1,30 @@
-use crate::{
-    BuildIo, PowerState, SplitIo, StateSignal,
-    at_command::unsolicited::{self, CFun, NewSmsIndex},
-};
 use core::{future::Future, str::from_utf8};
 use embassy_futures::select::{Either3, select3};
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex, channel::Sender, pipe::Pipe, signal::Signal, watch, zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender}
+    blocking_mutex::raw::RawMutex,
+    channel::Sender,
+    pipe::Pipe,
+    signal::Signal,
+    watch,
+    zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
 use embassy_time::{Duration, with_timeout};
 use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
-use crate::Error;
-use crate::at_command::{
-    AtParseLine, ResponseCode,
-    unsolicited::{
-        GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
+use crate::{
+    BuildIo, Error, PowerState, SplitIo, StateSignal,
+    at_command::{
+        AtParseLine, ResponseCode,
+        unsolicited::{
+            GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
+        },
     },
+    at_command::{cfun, unsolicited},
+    log,
+    modem::{RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener, AppNetworkMap},
+    read::ModemReader,
 };
-use crate::log;
-use crate::modem::{RawAtCommand, TcpContext, ReadyState, power::PowerSignalListener};
-use crate::read::ModemReader;
 
 pub const PUMP_COUNT: usize = 3;
 
@@ -38,7 +42,8 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
     pub(crate) ready: watch::Sender<'context, M, ReadyState, 1>,
     pub(crate) registration_events: &'context StateSignal<M, NetworkRegistration>,
-    pub(crate) sms_indices: Sender<'context, M, NewSmsIndex, 5>,
+    pub(crate) sms_indices: Sender<'context, M, unsolicited::NewSmsIndex, 5>,
+    pub(crate) pdp_status: watch::Sender<'context, M, AppNetworkMap, 1>,
 }
 
 impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS>
@@ -126,18 +131,37 @@ where
                     return Ok(());
                 }
                 Urc::CPin(cpin) => {
+                    // This can actually be a solicited response--
+                    // without a stateful parser there's no way to
+                    // know, so just assume it is and put it in
+                    // the response queue
                     let mut buf =
                         with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
                     *buf = ResponseCode::CPin(cpin);
                     buf.send_done();
                     return Ok(());
                 }
-                Urc::CFun(CFun) => {
-                    self.ready.send(ReadyState::Ready);
+                Urc::CFun(cfun) => {
+                    match cfun.0 {
+                        cfun::Functionality::Minimal => self.ready.send(ReadyState::None),
+                        cfun::Functionality::Full => self.ready.send(ReadyState::Ready),
+                    }
+                    return Ok(());
+                }
+                Urc::AppNetworkActive(unsolicited::AppNetworkActive { id, active }) => {
+                    self.pdp_status.send_modify(|status| {
+                        if let Some(id) = id {
+                            let _ = status.get_or_insert_default().status.insert(id, active);
+                        }
+                    });
                     return Ok(());
                 }
                 Urc::Ready(unsolicited::Ready) => {
                     self.ready.send(ReadyState::Ready);
+                    return Ok(());
+                }
+                Urc::SmsReady(unsolicited::SmsReady) => {
+                    self.ready.send(ReadyState::SmsReady);
                     return Ok(());
                 }
                 _ => log::warn!("Unhandled URC: {:?}", message),
@@ -159,7 +183,7 @@ where
 
                 sms.message = line[..line.len()].try_into().unwrap_or_default();
             } else {
-                log::debug!("Got generic response: {:?}", line);
+                log::debug!("Got generic response: {:?}", response);
             }
             let mut buf =
                 with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;

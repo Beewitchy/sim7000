@@ -3,7 +3,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use futures::{FutureExt, select_biased};
 
-use crate::at_command::{cgnsinf, unsolicited::{GnssFix, GnssReport}};
+use crate::at_command::{cgnsinf, unsolicited};
 use crate::drop::{AsyncDrop, DropChannel, DropMessage};
 use crate::modem::CommandRunner;
 use crate::modem::power::PowerSignalListener;
@@ -19,7 +19,7 @@ pub struct Gnss<'x, 'c, M: RawMutex> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
-    reports: Option<&'x Signal<M, GnssReport>>,
+    unsolicited_reports: Option<&'x Signal<M, unsolicited::GnssReport>>,
     commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
     power_signal: PowerSignalListener<'x, M>,
     _drop: AsyncDrop<'x, M>,
@@ -33,14 +33,14 @@ where
     M: RawMutex,
 {
     pub(crate) fn new(
-        reports: &'x Signal<M, GnssReport>,
+        unsolicited_reports: &'x Signal<M, unsolicited::GnssReport>,
         commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
         power_signal: PowerSignalListener<'x, M>,
         drop_channel: &'x DropChannel<M>,
         timeout: Duration,
     ) -> Self {
-        Gnss {
-            reports: Some(reports),
+        Self {
+            unsolicited_reports: Some(unsolicited_reports),
             commands,
             power_signal,
             _drop: AsyncDrop::new(drop_channel, DropMessage::Gnss),
@@ -48,30 +48,31 @@ where
         }
     }
 
-    /// Wait until the next GNSS report.
-    pub async fn get_report(&mut self) -> Result<GnssReport, Closed> {
-        // TODO: SIM7000
-        self.commands.lock().await.run(cgnsinf::GetGnssReport).await.map_err(|_| Closed)?;
+    pub async fn get_report(&mut self) -> Result<cgnsinf::GnssReport, super::Error> {
+        let (report, _) = self.commands.lock().await.run(cgnsinf::GetGnssReport).await?;
+        Ok(report)
+    }
 
-        let reports = self.reports.ok_or(Closed)?;
+    /// Wait until the next GNSS report.
+    pub async fn wait_for_report(&mut self) -> Result<unsolicited::GnssReport, Closed> {
+        let reports = self.unsolicited_reports.ok_or(Closed)?;
         select_biased! {
             report = reports.wait().fuse() => Ok(report),
             _ = self.power_signal.wait_for(PowerState::Off).fuse() => {
-                self.reports = None;
+                self.unsolicited_reports = None;
                 Err(Closed)
             }
             _ = Timer::after(self.timeout).fuse() => {
                 log::warn!("Gnss timed out");
-                self.reports = None;
+                self.unsolicited_reports = None;
                 Err(Closed)
             }
         }
     }
 
-    /// Wait until the GNSS reports a fix on our location.
-    pub async fn get_fix(&mut self) -> Result<GnssFix, Closed> {
+    pub async fn wait_for_fix(&mut self) -> Result<unsolicited::GnssFix, Closed> {
         loop {
-            if let GnssReport::Fix(fix) = self.get_report().await? {
+            if let unsolicited::GnssReport::Fix(fix) = self.wait_for_report().await? {
                 return Ok(fix);
             }
         }

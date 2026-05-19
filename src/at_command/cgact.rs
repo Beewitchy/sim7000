@@ -9,7 +9,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
-    type Response = (heapless::Vec<CGact, 3>, GenericOk);
+    type Response = (heapless::Vec<CGact, 4>, GenericOk);
 
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGACT?\r")
@@ -24,7 +24,7 @@ pub struct CGact {
 }
 
 impl AtRequest for CGact {
-    type Response = (heapless::Vec<CGact, 3>, GenericOk);
+    type Response = (heapless::Vec<CGact, 4>, GenericOk);
 
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGACT={},{}\r", self.cid, self.state as u8)

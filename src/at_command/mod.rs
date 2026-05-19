@@ -18,6 +18,7 @@ pub mod cclk;
 pub mod cedrxs;
 pub mod cereg;
 pub mod cfgri;
+pub mod cfun;
 pub mod cgmr;
 pub mod cgnapn;
 pub mod cgnscold;
@@ -167,6 +168,7 @@ pub enum ResponseCode {
     ConfigureEDRX(ConfigureEDRX),
     CNSMod(cnsmod::CNSMod),
     PdpContextActivation(cgact::CGact),
+    PdpNetworkActive(cnact::CNActPDP),
     NetworkApn(NetworkApn),
     NetworkTime(NetworkTime),
     DownloadInfo(DownloadInfo),
@@ -211,6 +213,7 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::ConfigureEDRX))
             .or_else(parse(line, ResponseCode::CNSMod))
             .or_else(parse(line, ResponseCode::PdpContextActivation))
+            .or_else(parse(line, ResponseCode::PdpNetworkActive))
             .or_else(parse(line, ResponseCode::NetworkApn))
             .or_else(parse(line, ResponseCode::NetworkTime))
             .or_else(parse(line, ResponseCode::DownloadInfo))

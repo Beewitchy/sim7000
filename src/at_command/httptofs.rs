@@ -23,17 +23,29 @@ pub enum StatusCode {
 }
 
 /// AT+HTTPTOFS=...
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DownloadToFileSystem {
     pub url: String<64>,
     pub file_path: String<32>,
+    pub timeout: Option<u16>,
+    pub retry_count: Option<u8>,
 }
 
 impl AtRequest for DownloadToFileSystem {
     type Response = (GenericOk, DownloadInfo);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+HTTPTOFS=\"{}\",\"{}\"\r", self.url, self.file_path)
+        write!(buf, "AT+HTTPTOFS=\"{}\",\"{}\"", self.url, self.file_path)?;
+        if let Some(timeout) = self.timeout {
+            write!(buf, ",{}", timeout)?;
+        }
+        if let Some(retry_count) = self.retry_count {
+            if self.timeout.is_none() {
+                write!(buf, ",")?;
+            }
+            write!(buf, ",{}", retry_count)?;
+        }
+        write!(buf, "\r")
     }
 }
 
