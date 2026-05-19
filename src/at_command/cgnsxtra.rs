@@ -1,4 +1,6 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, stub_parser_prefix};
+use crate::util::collect_array;
+
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -20,14 +22,18 @@ impl AtRequest for GnssXtra {
     }
 }
 
-/// AT+CGNSXTRA=...
+/// AT+CGNSXTRA
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ValidateGnssXtra;
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GnssXtraInfo;
+pub struct GnssXtraInfo {
+    pub valid_diff_hours: Option<u8>,
+    pub valid_duration_hours: u32,
+    pub download_time: cclk::UtcTime,
+}
 
 impl AtRequest for ValidateGnssXtra {
     type Response = (GnssXtraInfo, GenericOk);
@@ -38,7 +44,18 @@ impl AtRequest for ValidateGnssXtra {
 
 impl AtParseLine for GnssXtraInfo {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        stub_parser_prefix(line, "+CGNSXTRA:", GnssXtraInfo)
+        // Prefix is optional
+        let line = line.strip_prefix("+CGNSXTRA:").unwrap_or(line);
+        let [valid_diff_hours, valid_duration_hours, download_time] = collect_array(line.splitn(3, ',')).ok_or("missing arguments")?;
+        let valid_diff_hours: i16 = valid_diff_hours.parse().map_err(|_| "invalid data")?;
+        let valid_diff_hours = if valid_diff_hours >= 0 { Some(valid_diff_hours as u8) } else { None };
+        let valid_duration_hours = valid_duration_hours.parse().map_err(|_| "invalid data")?;
+        let (download_time, _remain) = cclk::FromCclkStr::from_cclk_str(download_time).ok_or("missing time")?;
+        Ok(GnssXtraInfo {
+            valid_diff_hours,
+            valid_duration_hours,
+            download_time,
+        })
     }
 }
 

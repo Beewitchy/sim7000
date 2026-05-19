@@ -998,18 +998,18 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to assisted gps.
     ///
     /// Before calling this function, make sure the XTRA file has been downloaded. [Modem::download_xtra]
-    pub async fn cold_start_with_xtra(&mut self) -> Result<(), Error> {
+    pub async fn cold_start_with_xtra(&mut self) -> Result<cgnsxtra::GnssXtraInfo, Error> {
         let mut commands = self.commands.lock().await;
 
         commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
-        commands.run(cgnsxtra::ValidateGnssXtra).await?;
+        let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
             .await?;
 
         commands.run(cgnscold::GnssColdStart).await?.1.success()?;
 
-        Ok(())
+        Ok(info)
     }
 
     pub async fn claim_voltage_warner(&mut self) -> Option<VoltageWarner<'_, M>> {
