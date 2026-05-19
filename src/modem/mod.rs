@@ -891,7 +891,29 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .map(|(utc, _)| utc.time)
     }
 
-    pub async fn download_xtra(&mut self, url: &str) -> Result<(), Error> {
+    pub async fn download_xtra(
+        &mut self,
+        urls: impl IntoIterator<Item = &str>,
+        system: Option<GnssSystem>,
+    ) -> Result<(), Error> {
+        // XTRA file server:
+        // 1. iot1.xtracloud.net
+        // 2. iot2.xtracloud.net
+        // 3. iot3.xtracloud.net
+        // XTRA file:
+        // 1. GPS+GLO: xtra3gr_72h.bin
+        // 2. GPS+BDS: xtra3gc_72h.bin
+        // 3. GPS+GAL: xtra3ge_72h.bin
+        // 4. GPS+QZSS: xtra3gj_72h.bin
+        // 5. GPS: xtra3g_72h.bin
+        let xtra_file = match system {
+            Some(GnssSystem::GLONASS) => "xtra3gr_72h.bin",
+            Some(GnssSystem::BeiDou) => "xtra3gc_72h.bin",
+            Some(GnssSystem::Galileo) => "xtra3ge_72h.bin",
+            Some(GnssSystem::QZSS) => "xtra3gj_72h.bin",
+            None => "xtra3g_72h.bin",
+        };
+
         let mut commands = self.commands.lock().await;
 
         let (status, _) = commands.run(cnact::GetAppNetworkPDP).await?;
@@ -934,27 +956,31 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let retry_count = 5;
         let timeout = 50;
         let command_timeout = Some(Duration::from_secs(retry_count as u64 * timeout as u64 + 1));
-        try_retry!(
-            ("download xtra", 3, Duration::from_millis(200)),
-            commands
+        let mut status_code = httptofs::StatusCode::BadRequest;
+        for url in urls {
+            let mut url: heapless::String<64> = url.try_into().map_err(|_| Error::BufferOverflow)?;
+            url.push('/').map_err(|_| Error::BufferOverflow)?;
+            url.push_str(xtra_file).map_err(|_| Error::BufferOverflow)?;
+            let dl_info = commands
                 .run_with_timeout(
                     command_timeout,
                     httptofs::DownloadToFileSystem {
                         // unclear which xtra file to use, the size differs depending on server
                         // so they might contain more/different data or different satellite networks
                         // also, sometimes the server is scuffed
-                        url: url.try_into().unwrap_or_default(),
-                        file_path: "/customer/xtra3grc.bin".try_into().unwrap_or_default(),
+                        url,
+                        file_path: "/customer/Xtra3.bin".try_into().unwrap_or_default(),
                         retry_count: Some(retry_count),
-                        timeout: Some(timeout)
-                    }
+                        timeout: Some(timeout),
+                    },
                 )
                 .await?
-                .1
-                .status_code
-                .success()
-        )
-        .map_err(Error::Httptofs)?;
+                .1;
+            status_code = dl_info.status_code;
+            if status_code.success().is_ok() && dl_info.data_length > 0 {
+                break;
+            }
+        }
 
         if activate_pdp {
             commands
@@ -966,7 +992,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .await?;
         }
 
-        Ok(())
+        status_code.success().map_err(Error::Httptofs)
     }
 
     /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to assisted gps.
@@ -976,6 +1002,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let mut commands = self.commands.lock().await;
 
         commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
+        commands.run(cgnsxtra::ValidateGnssXtra).await?;
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
             .await?;

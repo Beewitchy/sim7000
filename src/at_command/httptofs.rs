@@ -53,7 +53,7 @@ impl AtRequest for DownloadToFileSystem {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DownloadInfo {
     pub status_code: StatusCode,
-    data_length: u64,
+    pub data_length: u64,
 }
 
 impl StatusCode {

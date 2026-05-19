@@ -174,6 +174,7 @@ pub enum ResponseCode {
     DownloadInfo(DownloadInfo),
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
+    XtraInfo(cgnsxtra::GnssXtraInfo),
     GnssWorkModeSet(cgnsmod::GnssWorkModeSet),
     GnssReport(cgnsinf::GnssReport),
     PowerDown(unsolicited::PowerDown),
@@ -219,6 +220,7 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::DownloadInfo))
             .or_else(parse(line, ResponseCode::CopyResponse))
             .or_else(parse(line, ResponseCode::XtraStatus))
+            .or_else(parse(line, ResponseCode::XtraInfo))
             .or_else(parse(line, ResponseCode::GnssWorkModeSet))
             .or_else(parse(line, ResponseCode::GnssReport))
             .or_else(parse(line, ResponseCode::CclkTime))

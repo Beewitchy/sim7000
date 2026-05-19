@@ -10,6 +10,11 @@ impl AtParseLine for Psuttz {
             .strip_prefix("*PSUTTZ:")
             .ok_or("missing prefix")?
             .trim();
-        Ok(Self(cclk::parse_psuttz_time(line).ok_or("couldn't parse datetime arguments")?))
+        // I have seen *PSUTTZ responses in cclk format so that is handled too as a fallback
+        Ok(Self(
+            cclk::parse_psuttz_time(line)
+                .or_else(|| cclk::FromCclkStr::from_cclk_str(line).map(|(time, _rem)| time))
+                .ok_or("couldn't parse datetime arguments")?,
+        ))
     }
 }

@@ -43,9 +43,7 @@ where
             .strip_suffix('"')
             .ok_or("Missing string argument")?;
         let (time, _) = Time::from_cclk_str(line).ok_or("couldn't parse time")?;
-        Ok(CclkTime {
-            time,
-        })
+        Ok(CclkTime { time })
     }
 }
 
@@ -120,7 +118,7 @@ impl FromCclkStr for super::unsolicited::DateTime {
 
 #[cfg(feature = "chrono")]
 impl FromCclkStr for chrono::DateTime<chrono::Utc> {
-fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
+    fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
         let remain = chrono::format::parse_and_remainder(
@@ -143,9 +141,14 @@ fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
         )
         .ok()?;
         if remain.starts_with(&['+', '-']) {
-            if let Some((tzoff, remain)) = remain.split_once(|c: char| !(match c { '+' => true, '-' => true, c => c.is_numeric() }) ) {
-                if let Ok(tzoff_quater_hours) = tzoff.parse()
-                {
+            if let Some((tzoff, remain)) = remain.split_once(|c: char| {
+                !(match c {
+                    '+' => true,
+                    '-' => true,
+                    c => c.is_numeric(),
+                })
+            }) {
+                if let Ok(tzoff_quater_hours) = tzoff.parse() {
                     let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
                     let dt = parsed.to_datetime().ok()?.to_utc();
