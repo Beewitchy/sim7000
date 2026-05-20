@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk, cgnscold::XtraStatus};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -36,7 +36,7 @@ pub struct GnssXtraInfo {
 }
 
 impl AtRequest for ValidateGnssXtra {
-    type Response = (GnssXtraInfo, GenericOk);
+    type Response = (Result<GnssXtraInfo, XtraStatus>, GenericOk);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGNSXTRA\r")
     }

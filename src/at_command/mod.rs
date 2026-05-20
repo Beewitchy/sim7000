@@ -19,6 +19,7 @@ pub mod cedrxs;
 pub mod cereg;
 pub mod cfgri;
 pub mod cfun;
+pub mod cgact;
 pub mod cgmr;
 pub mod cgnapn;
 pub mod cgnscold;
@@ -29,7 +30,6 @@ pub mod cgnspwr;
 pub mod cgnsurc;
 pub mod cgnsxtra;
 pub mod cgreg;
-pub mod cgact;
 pub mod cifsrex;
 pub mod ciicr;
 pub mod cipclose;
@@ -69,9 +69,10 @@ pub mod sapbr;
 
 pub use at::At;
 pub use ate::SetEcho;
-pub use ati::{GetProductInformation, ApRev, Csub, QualityControlNumber, ProductInfoImei};
+pub use ati::{ApRev, Csub, GetProductInformation, ProductInfoImei, QualityControlNumber};
 pub use cbatchk::EnableVBatCheck;
 pub use ccid::{Iccid, ShowIccid};
+use cclk::CclkTime;
 pub use cedrxs::{AcTType, ConfigureEDRX, EDRXSetting};
 pub use cfgri::{ConfigureRiPin, RiPinMode};
 pub use cgmr::{FwVersion, GetFwVersion};
@@ -95,14 +96,14 @@ pub use cmgf::{GetSmsMessageFormat, SetSmsMessageFormat, SmsMessageFormat};
 pub use cmgs::{MessageReference, SendSms};
 pub use cmnb::{NbMode, SetNbMode};
 pub use cnact::{CnactMode, SetAppNetwork};
-pub use cncfg::{PdpConfigure};
+pub use cncfg::PdpConfigure;
 pub use cnmp::{NetworkMode, SetNetworkMode};
-pub use cnsmod::{ShowSystemMode, SetAutoSystemMode};
+pub use cnsmod::{SetAutoSystemMode, ShowSystemMode};
 pub use cntp::{Execute, SynchronizeNetworkTime};
 pub use cntpcid::SetGprsBearerProfileId;
 pub use cops::{GetOperatorInfo, OperatorFormat, OperatorInfo, OperatorMode};
-pub use cpowd::PowerDown;
 pub use cpin::GetPinStatus;
+pub use cpowd::PowerDown;
 pub use cpsi::{GetSystemInfo, SystemInfo, SystemMode};
 pub use csclk::SetSlowClock;
 pub use cscs::{CharacterSet, SetTeCharacterSet};
@@ -114,7 +115,6 @@ pub use httptofs::DownloadToFileSystem;
 pub use ifc::{FlowControl, SetFlowControl};
 pub use ipr::{BaudRate, SetBaudRate};
 pub use sapbr::{BearerSettings, CmdType, ConParamType};
-use cclk::CclkTime;
 
 use self::{
     cgnscold::XtraStatus, cgnscpy::CopyResponse, cntp::NetworkTime, httptofs::DownloadInfo,
@@ -140,6 +140,48 @@ pub trait AtRequest: Debug + defmt::Format {
 pub trait AtRequest: Debug {
     type Response;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Either<T1: AtResponse + Clone, T2: AtResponse + Clone> {
+    T1(T1),
+    T2(T2),
+}
+
+impl<T1: AtResponse + Clone, T2: AtResponse + Clone> From<Result<T1, T2>> for Either<T1, T2> {
+    fn from(value: Result<T1, T2>) -> Self {
+        match value {
+            Ok(val) => Self::T1(val),
+            Err(err) => Self::T2(err),
+        }
+    }
+}
+
+impl<T: AtResponse + Clone, E: AtResponse + Clone> From<Either<T, E>> for Result<T, E> {
+    fn from(value: Either<T, E>) -> Self {
+        match value {
+            Either::T1(val) => Ok(val),
+            Either::T2(err) => Err(err),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Seq<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone>(
+    pub heapless::Vec<T, N>,
+    pub DoneT,
+);
+
+// todo: ellie (20.05.2026) - Custom iterator returning the DoneT value after the sequence
+impl<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone> IntoIterator for Seq<T, N, DoneT> {
+    type Item = <heapless::Vec<T, N> as IntoIterator>::Item;
+    type IntoIter = <heapless::Vec<T, N> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
 }
 
 pub trait AtResponse: Sized {

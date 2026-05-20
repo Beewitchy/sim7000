@@ -2,7 +2,7 @@ use heapless::String;
 
 use crate::{util::collect_array};
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, Seq};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +72,7 @@ impl AtRequest for SetAppNetworkPDP {
 pub struct GetAppNetworkPDP;
 
 impl AtRequest for GetAppNetworkPDP {
-    type Response = (heapless::Vec<CNActPDP, 4>, GenericOk);
+    type Response = Seq<CNActPDP, 4, GenericOk>;
 
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CNACT?\r")

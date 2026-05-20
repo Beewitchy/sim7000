@@ -5,7 +5,7 @@ pub mod power;
 use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
-        At, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService,
+        At, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService, Seq,
         SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, cbatchk,
         ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
@@ -21,7 +21,7 @@ use crate::{
         cmnb::{self, NbMode},
         cnact, cncfg,
         cnmi::{SetSmsIndication, SmsIndicationMode, SmsMtMode},
-        cnmp, cntp, cntpcid, cops, cpowd,
+        cnmp, cnsmod, cntp, cntpcid, cops, cpowd,
         cpsi::{self},
         creg, csclk, csq, gsn, httptofs,
         ipr::{self, BaudRate},
@@ -326,7 +326,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         self.ap_password = ap_password;
     }
 
-    pub async fn activate(&mut self) -> Result<(), Error> {
+    pub async fn activate(&mut self) -> Result<cnsmod::SystemMode, Error> {
         log::info!("activating modem");
 
         self.async_drop().await?;
@@ -411,7 +411,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 embassy_time::Timer::after_secs(2).await;
             }
         }
-        let (_pdp_states, _) = commands.run(cgact::GetPdpContextActivation).await?;
+        let Seq(_pdp_states, _) = commands.run(cgact::GetPdpContextActivation).await?;
         log::info!("registered to network");
 
         // TODO: SIM7000
@@ -432,6 +432,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         log::info!("authenticating with apn {:?}", apn);
 
+        if Self::query_pdp_active(&mut commands, 0).await? {
+            commands
+                .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
+                    pdp_index: 0,
+                    mode: cnact::CnactMode::Deactive,
+                    address: None,
+                }))
+                .await?;
+        }
+
         commands
             .run(cncfg::PdpConfigure {
                 apn: self.apn.as_ref().ok_or(Error::NoApn)?.clone(),
@@ -447,8 +457,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 address: None,
             }))
             .await?;
-
-        let _ = commands.run(ShowSystemMode).await?;
 
         // todo: ellie (17.05.2026) - different command set compatibility
         // TODO: SIM7000
@@ -466,10 +474,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //     .run_with_timeout(Some(Duration::from_secs(86)), ciicr::StartGprs)
         //     .await?;
 
-        // let (_ip, _) = commands.run(cifsrex::GetLocalIpExt).await?;
+        let (system_mode, _) = commands.run(ShowSystemMode).await?;
 
         log::info!("modem successfully activated");
-        Ok(())
+        Ok(system_mode.system_mode)
     }
 
     /// Resets the network priority to the priority provided when initializing [Modem::init] with [NetworkModeConfig::Automatic]
@@ -532,6 +540,23 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 CPin::Ready => return Ok(()),
             }
         }
+    }
+
+    async fn query_pdp_active(
+        commands: &mut CommandRunner<'_, M>,
+        pdp_index: u8,
+    ) -> Result<bool, Error> {
+        let status = commands.run(cnact::GetAppNetworkPDP).await?;
+        Ok(status
+            .into_iter()
+            .find_map(|item| {
+                if item.pdp_index == pdp_index {
+                    Some(matches!(item.mode, cnact::CnactMode::Active))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false))
     }
 
     pub async fn deactivate(&mut self) -> Result<(), Error> {
@@ -628,7 +653,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn async_drop(&mut self) -> Result<(), Error> {
         let drop_channel = self.context.drop_channel.receiver();
         if drop_channel.is_empty() {
-            return Ok(())
+            return Ok(());
         }
         let mut active_signal = self.context.active_signal.subscribe();
         let mut current_power_state = self.power.state();
@@ -936,17 +961,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         let mut commands = self.commands.lock().await;
 
-        let (status, _) = commands.run(cnact::GetAppNetworkPDP).await?;
-        let activate_pdp = !status
-            .into_iter()
-            .find_map(|item| {
-                if item.pdp_index == 0 {
-                    Some(matches!(item.mode, cnact::CnactMode::Active))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(false);
+        let activate_pdp = !Self::query_pdp_active(&mut commands, 0).await?;
         if activate_pdp {
             commands
                 .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -978,7 +993,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let command_timeout = Some(Duration::from_secs(retry_count as u64 * timeout as u64 + 1));
         let mut status_code = httptofs::StatusCode::BadRequest;
         for url in urls {
-            let mut url: heapless::String<64> = url.try_into().map_err(|_| Error::BufferOverflow)?;
+            let mut url: heapless::String<64> =
+                url.try_into().map_err(|_| Error::BufferOverflow)?;
             url.push('/').map_err(|_| Error::BufferOverflow)?;
             url.push_str(xtra_file).map_err(|_| Error::BufferOverflow)?;
             let dl_info = commands
@@ -1017,14 +1033,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to assisted gps.
     ///
-    /// Before calling this function, make sure the XTRA file has been downloaded. [Modem::download_xtra]
-    pub async fn cold_start_with_xtra(&mut self) -> Result<cgnsxtra::GnssXtraInfo, Error> {
+    /// Returns the status of the xtra file on success, which can be used to determine how much
+    ///  longer it should be valid for.
+    pub async fn cold_start_with_xtra(&mut self) -> Result<cgnsxtra::GnssXtraInfo, ColdStartErr> {
         self.async_drop().await?;
 
         let mut commands = self.commands.lock().await;
 
         commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
         let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
+        let info = info?;
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
             .await?;
@@ -1092,7 +1110,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             self.run_command_with_timeout(Some(Duration::from_secs(1)), cnact::GetAppNetworkPDP)
                 .await
         )
-        .map(|(response, _)| response)
+        .map(|Seq(response, _)| response)
     }
 
     pub async fn query_iccid(&mut self) -> Result<ccid::Iccid, Error> {
@@ -1195,6 +1213,25 @@ impl<M: RawMutex> SmsStream<'_, '_, M> {
             .run(SendSmsMessage(message.try_into().unwrap_or_default()))
             .await?;
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ColdStartErr {
+    InvalidXtra(cgnscold::XtraStatus),
+    Other(Error),
+}
+
+impl From<cgnscold::XtraStatus> for ColdStartErr {
+    fn from(v: cgnscold::XtraStatus) -> Self {
+        Self::InvalidXtra(v)
+    }
+}
+
+impl From<Error> for ColdStartErr {
+    fn from(v: Error) -> Self {
+        Self::Other(v)
     }
 }
 

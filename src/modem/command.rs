@@ -11,9 +11,11 @@ use embassy_sync::{
 use embassy_time::{Duration, TimeoutError, with_timeout};
 use heapless::{String, Vec};
 
-use crate::Error;
-use crate::at_command::{AtRequest, AtResponse, ResponseCode};
-use crate::log;
+use crate::{
+    Error,
+    at_command::{AtRequest, AtResponse, Either, ResponseCode, Seq},
+    log,
+};
 
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -258,18 +260,19 @@ where
             let response = ReceiveSlotRef::new(response);
             match ReceiveSlotRef::filter_map(response, |response| T1::from_generic(response)) {
                 Ok(response) => return Ok(Either::First(response)),
-                Err(response) => match ReceiveSlotRef::filter_map(response, |response| T2::from_generic(response)) {
+                Err(response) => match ReceiveSlotRef::filter_map(response, |response| {
+                    T2::from_generic(response)
+                }) {
                     Ok(response) => return Ok(Either::Second(response)),
-                    Err(err) =>
-                    match &*err {
+                    Err(err) => match &*err {
                         ResponseCode::Error(error) => return Err(Error::Sim(*error)),
                         unexpected_response => {
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
                             log::warn!("Got unexpected ATResponse: {:?}", unexpected_response)
                         }
-                    }
-                }
+                    },
+                },
             };
         }
     }
@@ -351,7 +354,7 @@ impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {
     }
 }
 
-impl<T: AtResponse + Clone, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for (T, Y) {
+impl<T: ExpectResponse<M>, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for (T, Y) {
     async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
         let r1 = <T as ExpectResponse<M>>::expect(runner).await?;
         let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
@@ -392,14 +395,12 @@ impl<
 }
 
 impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usize>
-    ExpectResponse<M> for (heapless::Vec<T, N>, DoneT)
+    ExpectResponse<M> for Seq<T, N, DoneT>
 {
     async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
         let mut response_vec = heapless::Vec::new();
         let done_response = loop {
-            match runner.expect_either_response::<T, DoneT>()
-            .await
-            {
+            match runner.expect_either_response::<T, DoneT>().await {
                 Ok(embassy_futures::select::Either::First(item)) => response_vec
                     .push(item.clone())
                     .map_err(|_| Error::BufferOverflow)?,
@@ -407,6 +408,28 @@ impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usi
                 Err(err) => return Err(err),
             }
         };
-        Ok((response_vec, done_response))
+        Ok(Seq(response_vec, done_response))
+    }
+}
+
+impl<T: AtResponse + Clone, E: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for Result<T, E> {
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        match runner.expect_either_response::<T, E>().await {
+            Ok(embassy_futures::select::Either::First(item)) => Ok(Ok(item.clone())),
+            Ok(embassy_futures::select::Either::Second(item)) => Ok(Err(item.clone())),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+impl<T1: AtResponse + Clone, T2: AtResponse + Clone, M: RawMutex> ExpectResponse<M>
+    for Either<T1, T2>
+{
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        match runner.expect_either_response::<T1, T2>().await {
+            Ok(embassy_futures::select::Either::First(item)) => Ok(Either::T1(item.clone())),
+            Ok(embassy_futures::select::Either::Second(item)) => Ok(Either::T2(item.clone())),
+            Err(err) => Err(err),
+        }
     }
 }

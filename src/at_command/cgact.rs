@@ -1,6 +1,6 @@
 use core::str::FromStr as _;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, CnactMode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, GenericOk, ResponseCode, Seq};
 
 
 /// AT+CGACT?
@@ -9,7 +9,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
-    type Response = (heapless::Vec<CGact, 4>, GenericOk);
+    type Response = Seq<CGact, 4, GenericOk>;
 
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGACT?\r")
