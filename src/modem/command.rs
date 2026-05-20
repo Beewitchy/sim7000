@@ -298,7 +298,7 @@ where
         log::trace!("Completed AT command: {:?}", command);
 
         if let Err(e) = &result {
-            log::error!("AT command {:?} error: {:?}", command, e);
+            log::debug!("AT command {:?} error: {:?}", command, e);
         }
 
         result

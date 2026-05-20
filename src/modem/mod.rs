@@ -58,7 +58,7 @@ pub trait ModemBehavior<M: RawMutex> {
 
 pub struct Modem<'m, P, M: RawMutex, const N: usize> {
     context: &'m Shared<M, N>,
-    power_signal: PowerSignalBroadcaster<'m>,
+    active_signal: PowerSignalBroadcaster<'m>,
     commands: Mutex<M, CommandRunner<'m, M>>,
     power: P,
     apn: Option<heapless::String<63>>,
@@ -139,7 +139,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         );
         let modem = Modem {
             commands,
-            power_signal: context.shared.power_signal.publisher(),
+            active_signal: context.shared.active_signal.publisher(),
             context: &context.shared,
             power,
             apn: None,
@@ -169,7 +169,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             rx: &context.shared.rx_pipe,
             tx: &context.shared.tx_pipe,
             power_state: PowerState::Off,
-            power_signal: context.shared.power_signal.subscribe(),
+            active_signal: context.shared.active_signal.subscribe(),
         };
 
         let rx_pump = RxPump {
@@ -192,18 +192,18 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok((modem, io_pump, tx_pump, rx_pump))
     }
 
-    pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
-        log::info!("initializing modem");
-
-        // Wait for ready state--cycle power if necessary
+    async fn wait_for_ready(&mut self, max_tries: u64) -> Result<(), Error> {
+        // Wait for ready state, cycle power if necessary
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
-        self.power_signal.broadcast(PowerState::On);
-        for retry in 0..3 {
+        if matches!(self.power.state(), PowerState::Off) {
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+        }
+        self.active_signal.broadcast(PowerState::On);
+        for attempt in 0..max_tries {
             if with_timeout(
-                Duration::from_secs(retry * 5),
+                Duration::from_secs(attempt * 5),
                 ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
             )
             .await
@@ -211,15 +211,28 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             {
                 break;
             }
-            if self.commands.lock().await.run(At).await.is_ok() {
-                break;
+            // It's possible the RDY message from the modem was missed--
+            //  try sending an AT to get a response. I believe a non-error
+            //  response indicates the modem is up
+            if let Ok(mut commands) = self.commands.try_lock() {
+                if commands.run(At).await.is_ok() {
+                    break;
+                }
             }
             // Deactivating and rebooting seems to be often not needed,
             //  so only try it every other attempt
-            if retry % 2 != 0 {
+            if attempt % 2 != 0 {
                 self.deactivate().await?;
+                with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
             }
         }
+        Ok(())
+    }
+
+    pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
+        log::info!("initializing modem");
+
+        self.wait_for_ready(3).await?;
 
         let mut commands = self.commands.lock().await;
 
@@ -277,7 +290,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             }
         }
 
-        // todo: ellie (16.05.2026) - Ri interrupt pin & bat check config
+        // todo: ellie (16.05.2026) - add Ri interrupt pin & bat check configuration
         commands.run(cfgri::ConfigureRiPin(RiPinMode::Off)).await?;
         commands.run(cbatchk::EnableVBatCheck(false)).await?;
 
@@ -298,49 +311,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         drop(commands);
 
-        embassy_time::Timer::after_secs(2).await;
-
-        Ok(())
-    }
-
-    /// Execute queued drop commands
-    ///
-    /// You should call this between dropping & re-establishing sockets in order
-    ///  to clean up state
-    pub async fn async_drop(&mut self) -> Result<(), Error> {
-        let mut power_signal = self.context.power_signal.subscribe();
-        let drop_channel = self.context.drop_channel.receiver();
-        let mut current_power_state = self.power.state();
-        while !drop_channel.is_empty() {
-            select_biased! {
-                power_state = power_signal.listen().fuse() => {
-                    current_power_state = power_state;
-                }
-                drop_message = drop_channel.receive().fuse() => {
-                    if current_power_state == PowerState::On {
-                        // run drop command, abort if power state changes
-                        let result = select_biased! {
-                            power_state = power_signal.listen().fuse() => {
-                                current_power_state = power_state;
-                                Ok(())
-                            }
-                            result = async {
-                                // run drop command
-                                let mut runner = self.commands.lock().await;
-                                drop_message.run(&mut runner).await
-                            }.fuse() => result,
-                        };
-
-                        // clean up regardless of whether drop command succeeded
-                        drop_message.clean_up(self.context);
-                        result?;
-                    } else {
-                        drop_message.clean_up(self.context);
-                    }
-                },
-            }
-        }
-
         Ok(())
     }
 
@@ -358,33 +328,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn activate(&mut self) -> Result<(), Error> {
         log::info!("activating modem");
-        if matches!(self.power.state(), PowerState::Off) {
-            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
-        }
 
-        // Wait for ready state--cycle power if necessary
-        let Some(mut ready) = self.context.ready.receiver() else {
-            return Err(Error::InvalidContext);
-        };
-        for retry in 0..2 {
-            self.power_signal.broadcast(PowerState::On);
-            match with_timeout(
-                Duration::from_secs(retry * 10),
-                ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
-            )
-            .await
-            {
-                Ok(_) => break,
-                _ => {}
-            }
-            // Deactivating and rebooting seems to be often not needed,
-            //  so only try it every other attempt
-            if retry % 2 != 0 {
-                self.deactivate().await?;
-            }
-            self.power_signal.broadcast(PowerState::Off);
-            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
-        }
+        self.async_drop().await?;
+
+        self.wait_for_ready(2).await?;
 
         let mut commands = self.commands.lock().await;
 
@@ -476,7 +423,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 log::debug!("no default APN set, checking network for suggested APN.");
                 let (network_apn, _) = commands.run(cgnapn::GetNetworkApn).await?;
                 let Some(apn) = network_apn.apn else {
-                    log::error!("no APN set");
+                    log::debug!("no APN set");
                     return Err(Error::NoApn);
                 };
                 self.apn.insert(apn)
@@ -602,7 +549,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .await;
         }
         self.context.sms_state.signal(SmsState::Unavailable);
-        self.power_signal.broadcast(PowerState::Off);
+        self.active_signal.broadcast(PowerState::Off);
         self.context.registration_events.signal(NET_REG_DEFAULT);
         self.context.tcp.disconnect_all().await;
 
@@ -611,12 +558,23 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .await
                 .map_err(Error::from)?;
         }
+
+        // Run drop work after powering down: this allows drop commands
+        //  to avoid unnecessary work for the powered-down state
+        let drop_result = self.async_drop().await;
+
         self.context.ready.sender().send(ReadyState::None);
-        Ok(())
+
+        drop_result
     }
 
-    pub async fn reset(&mut self) {
-        self.power_signal.broadcast(PowerState::Off);
+    pub async fn reset(&mut self) -> Result<(), Error> {
+        // Flush drops before resetting--since the system will come
+        //  back up it may be useful to run the commands in online
+        //  mode
+        let drop_result = self.async_drop().await;
+
+        self.active_signal.broadcast(PowerState::Off);
         self.context.registration_events.signal(NET_REG_DEFAULT);
         self.context.tcp.disconnect_all().await;
         // modem needs to be enabled for reset
@@ -624,6 +582,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             self.power.enable().await;
         }
         self.power.reset().await;
+
+        drop_result
     }
 
     /// Wait until the modem has registered to a cell tower.
@@ -659,7 +619,55 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         }
     }
 
+    /// Execute queued drop commands
+    ///
+    /// You should call this between dropping & re-establishing sockets in order
+    ///  to clean up state.
+    ///
+    /// This is done manually to allow the drop process to take exclusive control of the commands channels.
+    pub async fn async_drop(&mut self) -> Result<(), Error> {
+        let drop_channel = self.context.drop_channel.receiver();
+        if drop_channel.is_empty() {
+            return Ok(())
+        }
+        let mut active_signal = self.context.active_signal.subscribe();
+        let mut current_power_state = self.power.state();
+        while !drop_channel.is_empty() {
+            select_biased! {
+                power_state = active_signal.listen().fuse() => {
+                    current_power_state = power_state;
+                }
+                drop_message = drop_channel.receive().fuse() => {
+                    if current_power_state == PowerState::On {
+                        // run drop command, abort if power state changes
+                        let result = select_biased! {
+                            power_state = active_signal.listen().fuse() => {
+                                current_power_state = power_state;
+                                Ok(())
+                            }
+                            result = async {
+                                // run drop command
+                                let mut runner = self.commands.lock().await;
+                                drop_message.run(&mut runner).await
+                            }.fuse() => result,
+                        };
+
+                        // clean up regardless of whether drop command succeeded
+                        drop_message.clean_up(self.context);
+                        result?;
+                    } else {
+                        drop_message.clean_up(self.context);
+                    }
+                },
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn activate_sms(&mut self) -> Result<(), Error> {
+        self.async_drop().await?;
+
         let mut commands = self.commands.lock().await;
         // Set up SMS stuff
         try_retry!(
@@ -694,6 +702,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         )
     }
     pub async fn send_sms(&mut self, destination: &str, message: &str) -> Result<(), Error> {
+        self.async_drop().await?;
+
         let mut commands = self.commands.lock().await;
         commands
             .run(cmgs::SendSms {
@@ -707,6 +717,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     pub async fn read_sms(&mut self) -> Result<SmsMessage, Error> {
+        self.async_drop().await?;
+
         let index =
             with_timeout(Duration::from_secs(1), self.context.sms_indices.receive()).await?;
         log::info!("Reading SMS at index: {:?}", index);
@@ -728,6 +740,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         host: &str,
         port: u16,
     ) -> Result<TcpStream<'_, 'm, M>, ConnectError> {
+        self.async_drop().await?;
+
         let tcp_context = self.context.tcp.claim().ok_or(ConnectError::NoFreeSlots)?;
 
         TcpStream::connect(
@@ -758,6 +772,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         &mut self,
         work_mode_priority: &WorkModePriority<GnssSystem, 4>,
     ) -> Result<Option<Gnss<'_, 'm, M>>, Error> {
+        self.async_drop().await?;
+
         let Some(reports) = self.context.gnss_slot.claim() else {
             return Ok(None);
         };
@@ -822,7 +838,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(Some(Gnss::new(
             reports,
             &self.commands,
-            self.context.power_signal.subscribe(),
+            self.context.active_signal.subscribe(),
             &self.context.drop_channel,
             Duration::from_secs(20),
         )))
@@ -834,6 +850,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         ntp_server: &str,
         timezone: u16,
     ) -> Result<cntp::NetworkTime, Error> {
+        self.async_drop().await?;
+
         let mut commands = self.commands.lock().await;
 
         commands
@@ -896,6 +914,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         urls: impl IntoIterator<Item = &str>,
         system: Option<GnssSystem>,
     ) -> Result<(), Error> {
+        self.async_drop().await?;
+
         // XTRA file server:
         // 1. iot1.xtracloud.net
         // 2. iot2.xtracloud.net
@@ -999,6 +1019,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Before calling this function, make sure the XTRA file has been downloaded. [Modem::download_xtra]
     pub async fn cold_start_with_xtra(&mut self) -> Result<cgnsxtra::GnssXtraInfo, Error> {
+        self.async_drop().await?;
+
         let mut commands = self.commands.lock().await;
 
         commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
@@ -1091,14 +1113,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .map(|(response, _)| response)
     }
 
-    pub async fn sleep(&mut self) {
-        self.power_signal.broadcast(PowerState::Sleeping);
+    pub async fn sleep(&mut self) -> Result<(), Error> {
+        let drop_result = self.async_drop().await;
+        self.active_signal.broadcast(PowerState::Sleeping);
         self.power.sleep().await;
+        drop_result
     }
 
     pub async fn wake(&mut self) {
         self.power.wake().await;
-        self.power_signal.broadcast(PowerState::On);
+        self.active_signal.broadcast(PowerState::On);
     }
 }
 

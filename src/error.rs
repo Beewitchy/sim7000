@@ -13,6 +13,8 @@ pub enum Error {
     Serial,
     UnknownResponse,
 
+    Transmit,
+
     SimUnavailable,
     /// No default APN was set, and the network did not provide one.
     NoApn,
@@ -48,6 +50,7 @@ impl embedded_io_async::Error for Error {
             Error::Timeout => embedded_io_async::ErrorKind::TimedOut,
             Error::Serial => embedded_io_async::ErrorKind::BrokenPipe,
             Error::UnknownResponse => embedded_io_async::ErrorKind::Other,
+            Error::Transmit => embedded_io_async::ErrorKind::Interrupted,
             Error::NoApn => embedded_io_async::ErrorKind::NotConnected,
             Error::Httptofs(_) => embedded_io_async::ErrorKind::Interrupted,
             Error::Xtra(_) => embedded_io_async::ErrorKind::Interrupted,

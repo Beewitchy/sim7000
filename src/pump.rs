@@ -93,8 +93,8 @@ where
                 }
                 Urc::Cmti(message) => {
                     if let Err(e) = self.sms_indices.try_send(message) {
-                        log::error!("Failed to send SMS index: {:?}", e);
-                        // todo: ellie (16.05.2026) - return error here?
+                        log::debug!("Failed to send SMS index: {:?}", e);
+                        return Err(Error::Transmit);
                     }
                     return Ok(());
                 }
@@ -237,7 +237,7 @@ pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) rx: &'context Pipe<M, 2048>,
     /// reads data from the tx pump
     pub(crate) tx: &'context Pipe<M, 2048>,
-    pub(crate) power_signal: PowerSignalListener<'context, M>,
+    pub(crate) active_signal: PowerSignalListener<'context, M>,
     pub(crate) power_state: PowerState,
 }
 
@@ -253,7 +253,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
             match select3(
                 self.tx.read(&mut tx_buf),
                 reader.read(&mut rx_buf),
-                self.power_signal.listen(),
+                self.active_signal.listen(),
             )
             .await
             {
@@ -287,7 +287,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
     }
 
     pub async fn low_power_pump(&mut self) {
-        self.power_state = self.power_signal.listen().await;
+        self.power_state = self.active_signal.listen().await;
     }
 }
 

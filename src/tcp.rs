@@ -271,7 +271,7 @@ impl<M: RawMutex> Write for TcpWriter<'_, '_, M> {
                         return Err(TcpError::Closed);
                     }
                     Connected | AlreadyConnected | ConnectionFailed => {
-                        log::error!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
+                        log::warn!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
                         stream.closed.store(true, Ordering::Release);
                         return Err(TcpError::Closed);
                     }
@@ -322,7 +322,7 @@ impl<M: RawMutex> Read for TcpReader<'_, '_, M> {
                         }
                         SendSuccess | SendFail => {}
                         Connected | AlreadyConnected | ConnectionFailed => {
-                            log::error!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
+                            log::warn!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
                             stream.closed.store(true, Ordering::Release);
                             return Err(TcpError::Closed);
                         }

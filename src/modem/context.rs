@@ -47,7 +47,7 @@ impl defmt::Format for AppNetworkMap {
 }
 
 pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
-    pub(crate) power_signal: PowerSignal<M>,
+    pub(crate) active_signal: PowerSignal<M>,
     pub(crate) drop_channel: DropChannel<M>,
     pub(crate) sms_indices: Channel<M, NewSmsIndex, 5>,
     pub(crate) sms_state: Signal<M, SmsState>,
@@ -69,7 +69,7 @@ pub struct ModemContext<'c, M: RawMutex, const TCP_SLOTS: usize> {
 impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS> where M: RawMutex {
     pub const fn new(tcp: TcpContext<M, TCP_SLOTS>) -> Self {
         Self {
-            power_signal: PowerSignal::new(),
+            active_signal: PowerSignal::new(),
             drop_channel: DropChannel::new(),
             sms_indices: Channel::new(),
             sms_state: Signal::new(),
