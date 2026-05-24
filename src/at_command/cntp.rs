@@ -65,7 +65,7 @@ impl AtParseLine for NetworkTime {
             .trim();
 
         let (code, time) = match line.split_once(',') {
-            Some((code, time)) => (code, cclk::parse_18char_str(time)),
+            Some((code, time)) => (code, cclk::parse_18char_str(time.strip_circumfix('"', '"').ok_or("no quotes around expected time parameter")?)),
             None => (line, None),
         };
 

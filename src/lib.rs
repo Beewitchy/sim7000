@@ -4,6 +4,7 @@
 // large enum variants are unavoidable in no_std, since we can't box things
 #![allow(clippy::large_enum_variant, clippy::result_large_err)]
 #![feature(drop_guard)]
+#![feature(strip_circumfix)]
 
 // TODO: at_command should probably be moved to its own crate
 pub mod at_command;
