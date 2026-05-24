@@ -1035,19 +1035,68 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Returns the status of the xtra file on success, which can be used to determine how much
     ///  longer it should be valid for.
-    pub async fn cold_start_with_xtra(&mut self) -> Result<cgnsxtra::GnssXtraInfo, ColdStartErr> {
+    pub async fn enable_gnss_xtra(
+        &mut self,
+        last_known_fix: Option<cclk::UtcTime>,
+    ) -> Result<cgnsxtra::GnssXtraInfo, ColdStartErr> {
         self.async_drop().await?;
+
+        let now = last_known_fix.and(self.query_local_time().await.ok());
 
         let mut commands = self.commands.lock().await;
 
-        commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
+        let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
+
         let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
-        let info = info?;
+        let info = match info {
+            Ok(info) => info,
+            Err(_) => {
+                commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
+                let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
+                info?
+            }
+        };
+
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
             .await?;
 
-        commands.run(cgnscold::GnssColdStart).await?.1.success()?;
+        enum GnssStateRelevancy {
+            Unknown,
+            Cold,
+            Warm,
+            Hot,
+        }
+
+        let cold_start;
+        #[cfg(feature = "chrono")]
+        if let Some(last_known_fix) = last_known_fix {
+            cold_start = if let Some(now) = now {
+                let age = now.signed_duration_since(last_known_fix);
+                if age < chrono::Duration::seconds(2) {
+                    GnssStateRelevancy::Hot
+                } else if age < chrono::Duration::minutes(1) {
+                    GnssStateRelevancy::Warm
+                } else {
+                    GnssStateRelevancy::Cold
+                }
+            } else {
+                GnssStateRelevancy::Cold
+            };
+        } else {
+            cold_start = GnssStateRelevancy::Unknown;
+        }
+        #[cfg(not(feature = "chrono"))]
+        {
+            cold_start = GnssStateRelevancy::Unknown;
+        }
+        match cold_start {
+            GnssStateRelevancy::Cold | GnssStateRelevancy::Unknown => {
+                commands.run(cgnscold::GnssColdStart).await?.1.success()?
+            }
+            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?.1.success()?,
+            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?.1.success()?,
+        }
 
         Ok(info)
     }

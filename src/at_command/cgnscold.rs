@@ -2,10 +2,20 @@ use crate::{error::Xtra, Error};
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
-/// AT+CGNSCOLD=...
+/// AT+CGNSCOLD
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssColdStart;
+
+/// AT+CGNSWARM
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GnssWarmStart;
+
+/// AT+CGNSHOT
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GnssHotStart;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -29,6 +39,20 @@ impl AtRequest for GnssColdStart {
     type Response = (GenericOk, XtraStatus);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGNSCOLD\r")
+    }
+}
+
+impl AtRequest for GnssWarmStart {
+    type Response = (GenericOk, XtraStatus);
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSWARM\r")
+    }
+}
+
+impl AtRequest for GnssHotStart {
+    type Response = (GenericOk, XtraStatus);
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSHOT\r")
     }
 }
 
