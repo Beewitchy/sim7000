@@ -64,8 +64,17 @@ impl AtParseLine for NetworkTime {
             .ok_or("Missing '+CNTP:'")?
             .trim();
 
+        use cclk::FromCclkStr as _;
+
         let (code, time) = match line.split_once(',') {
-            Some((code, time)) => (code, cclk::parse_18char_str(time.strip_circumfix('"', '"').ok_or("no quotes around expected time parameter")?)),
+            Some((code, time)) => (
+                code,
+                chrono::DateTime::<chrono::Utc>::from_cclk_str(
+                    time.strip_circumfix('"', '"')
+                        .ok_or("no quotes around expected time parameter")?,
+                )
+                .map(|(date, _)| date),
+            ),
             None => (line, None),
         };
 
