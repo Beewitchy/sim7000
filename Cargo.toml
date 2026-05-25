@@ -1,10 +1,10 @@
 [package]
 name = "sim7000-async"
-version = "6.1.1"
-authors = ["Zoey Riordan <zoey@dos.cafe>", "Joakim Hulthe <joakim@hulthe.net>"]
+version = "0.1.2"
+authors = ["Ellie H.", "Zoey Riordan <zoey@dos.cafe>", "Joakim Hulthe <joakim@hulthe.net>"]
 description = "Drivers for the SIM7000 series of chips"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/technocreatives/sim7000"
+repository = "https://github.com/Beewitchy/sim7000"
 edition = "2024"
 rust-version = "1.94"
 
