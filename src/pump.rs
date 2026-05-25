@@ -143,8 +143,8 @@ where
                 }
                 Urc::CFun(cfun) => {
                     match cfun.0 {
-                        cfun::Functionality::Minimal => self.ready.send(ReadyState::None),
                         cfun::Functionality::Full => self.ready.send(ReadyState::Ready),
+                        _ => self.ready.send(ReadyState::None),
                     }
                     return Ok(());
                 }

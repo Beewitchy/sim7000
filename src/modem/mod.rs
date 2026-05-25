@@ -6,8 +6,8 @@ use crate::{
     BuildIo, Error, ModemPower, PowerState,
     at_command::{
         At, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService, Seq,
-        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, cbatchk,
-        ccid, cclk,
+        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, atz,
+        cbatchk, ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg,
         cfgri::{self, RiPinMode},
@@ -229,12 +229,26 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(())
     }
 
-    pub async fn init(&mut self, config: RegistrationConfig) -> Result<(), Error> {
+    pub async fn init(
+        &mut self,
+        config: RegistrationConfig,
+        reset_saved_config: bool,
+    ) -> Result<(), Error> {
         log::info!("initializing modem");
 
         self.wait_for_ready(3).await?;
 
         let mut commands = self.commands.lock().await;
+
+        // Double-check that the modem is responding
+        try_retry!(
+            ("AT", 4, Duration::from_millis(250)),
+            commands.run(At).await
+        )?;
+
+        if reset_saved_config {
+            commands.run(atz::ResetConfigurationToDefaults).await?;
+        }
 
         // todo: ellie (16.05.2026) - flow control configuration
         // let set_flow_control = ifc::SetFlowControl {
@@ -253,11 +267,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //         break;
         //     }
         // }
-
-        try_retry!(
-            ("AT", 4, Duration::from_millis(250)),
-            commands.run(At).await
-        )?;
 
         // todo: ellie (16.05.2026) - sleep & slow-clock configuration
         commands.run(csclk::SetSlowClock(false)).await?;
@@ -308,6 +317,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         //         commands.run(configure_edrx).await
         //     )?;
         // }
+
+        let _ = commands
+            .run(cfun::SetFunctionality(cfun::Functionality::Full, Some(cfun::SetFunctionalityOption::Reset)))
+            .await?;
 
         drop(commands);
 

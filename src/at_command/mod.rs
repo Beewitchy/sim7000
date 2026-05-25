@@ -12,6 +12,7 @@ pub use generic_response::{CloseOk, GenericOk, SimError, WritePrompt};
 pub mod at;
 pub mod ate;
 pub mod ati;
+pub mod atz;
 pub mod cbatchk;
 pub mod ccid;
 pub mod cclk;
