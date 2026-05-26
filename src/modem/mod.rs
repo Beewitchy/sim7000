@@ -1002,8 +1002,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         // sometimes we aren't able to download the file the first couple of times
         let retry_count = 5;
-        let timeout = 50;
-        let command_timeout = Some(Duration::from_secs(retry_count as u64 * timeout as u64 + 1));
+        let timeout = 60;
+        let command_timeout = Some(Duration::from_secs(retry_count as u64 * timeout as u64 + 5));
         let mut status_code = httptofs::StatusCode::BadRequest;
         for url in urls {
             let mut url: heapless::String<64> =
