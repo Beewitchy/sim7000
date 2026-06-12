@@ -39,7 +39,7 @@ pub use context::*;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
 };
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
 
@@ -319,7 +319,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         // }
 
         let _ = commands
-            .run(cfun::SetFunctionality(cfun::Functionality::Full, Some(cfun::SetFunctionalityOption::Reset)))
+            .run(cfun::SetFunctionality(
+                cfun::Functionality::Full,
+                Some(cfun::SetFunctionalityOption::Reset),
+            ))
             .await?;
 
         drop(commands);
@@ -887,7 +890,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         &mut self,
         ntp_server: &str,
         timezone: u16,
-    ) -> Result<cntp::NetworkTime, Error> {
+    ) -> Result<NetworkTimeSync, Error> {
         self.async_drop().await?;
 
         let mut commands = self.commands.lock().await;
@@ -929,6 +932,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let (_, network_time) = commands
             .run_with_timeout(Some(Duration::from_secs(60)), cntp::Execute)
             .await?;
+
+        let sync_tick = Instant::now();
+        let network_time = NetworkTimeSync {
+            network_time,
+            sync_tick,
+        };
 
         commands
             .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -1295,6 +1304,11 @@ impl From<Error> for ColdStartErr {
     fn from(v: Error) -> Self {
         Self::Other(v)
     }
+}
+
+pub struct NetworkTimeSync {
+    pub network_time: cntp::NetworkTime,
+    pub sync_tick: Instant,
 }
 
 /// Configure cellular mobile communication and edrx.
