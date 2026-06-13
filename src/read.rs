@@ -35,11 +35,11 @@ where
             .iter()
             .position(|(offset, _)| *offset > line_end)
         {
-            if let Some(last_outdated_index) = next_timestamp_index.checked_sub(1) {
-                self.line_timestamps.drain(..last_outdated_index);
+            if next_timestamp_index > 0 {
+                self.line_timestamps.drain(..next_timestamp_index);
             }
             if let Some((offset, _)) = self.line_timestamps.first_mut() {
-                *offset -= line_end;
+                *offset = offset.saturating_sub(line_end);
             }
         } else {
             self.line_timestamps.clear();
