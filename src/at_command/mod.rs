@@ -2,6 +2,7 @@ use core::{
     fmt::Debug,
     num::{ParseFloatError, ParseIntError},
 };
+use embassy_time::Instant;
 
 pub mod generic_response;
 pub mod unsolicited;
@@ -129,6 +130,19 @@ pub struct AtParseErr {
 
 pub(crate) trait AtParseLine: Sized {
     fn from_line(line: &str) -> Result<Self, AtParseErr>;
+    fn from_line_timestamped(line: &str, _instant: Instant) -> Result<Self, AtParseErr> {
+        Self::from_line(line)
+    }
+}
+
+impl<R> AtParseLine for Timestamped<R> where R: AtParseLine {
+    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+        R::from_line(line).map(Timestamped::new_now)
+    }
+
+    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
+        R::from_line(line).map(|response| Timestamped::new(response, instant))
+    }
 }
 
 #[cfg(feature = "defmt")]
@@ -176,12 +190,116 @@ pub struct Seq<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone>
 );
 
 // todo: ellie (20.05.2026) - Custom iterator returning the DoneT value after the sequence
-impl<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone> IntoIterator for Seq<T, N, DoneT> {
+impl<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone> IntoIterator
+    for Seq<T, N, DoneT>
+{
     type Item = <heapless::Vec<T, N> as IntoIterator>::Item;
     type IntoIter = <heapless::Vec<T, N> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Timestamped<R> {
+    pub response: R,
+    pub instant: Instant,
+}
+
+impl<R> Timestamped<R> {
+    pub fn new_now(response: R) -> Self {
+        Self {
+            response,
+            instant: Instant::now(),
+        }
+    }
+
+    pub fn new(response: R, instant: Instant) -> Self {
+        Self { response, instant }
+    }
+
+    pub fn into_response(self) -> R {
+        self.response
+    }
+}
+
+impl<R> AsRef<R> for Timestamped<R> {
+    fn as_ref(&self) -> &R {
+        &self.response
+    }
+}
+
+impl<R> AsMut<R> for Timestamped<R> {
+    fn as_mut(&mut self) -> &mut R {
+        &mut self.response
+    }
+}
+
+impl<R> From<TimestampedRef<'_, R>> for Timestamped<R>
+where
+    R: Clone,
+{
+    fn from(value: TimestampedRef<R>) -> Self {
+        Self {
+            response: value.response.clone(),
+            instant: value.instant,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TimestampedRef<'r, R> {
+    pub response: &'r mut R,
+    pub instant: Instant,
+}
+
+impl<'r, R> TimestampedRef<'r, R> {
+    pub fn new_now(response: &'r mut R) -> Self {
+        Self {
+            response,
+            instant: Instant::now(),
+        }
+    }
+
+    pub fn new(response: &'r mut R, instant: Instant) -> Self {
+        Self { response, instant }
+    }
+
+    pub fn as_response(&self) -> &R {
+        self.response
+    }
+
+    pub fn as_mut_response(&mut self) -> &mut R {
+        self.response
+    }
+}
+
+impl<'r, R> AsRef<R> for TimestampedRef<'r, R> {
+    fn as_ref(&self) -> &R {
+        self.response
+    }
+}
+
+impl<'r, R> AsMut<R> for TimestampedRef<'r, R> {
+    fn as_mut(&mut self) -> &mut R {
+        self.response
+    }
+}
+
+impl<'r, R> core::ops::Deref for TimestampedRef<'r, R> {
+    type Target = R;
+
+    fn deref(&self) -> &Self::Target {
+        self.response
+    }
+}
+
+impl<'r, R> core::ops::DerefMut for TimestampedRef<'r, R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.response
     }
 }
 

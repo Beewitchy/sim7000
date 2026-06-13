@@ -2,12 +2,14 @@ use crate::util::collect_array;
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
 
-#[derive(Clone, Debug, PartialEq)]
+use embassy_time::Instant;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GnssReport {
     NotEnabled,
     NoFix { satellites_in_view: Option<u8> },
-    Fix(NavInfo),
+    Fix { nav_info: NavInfo, instant: Instant },
 }
 
 /// AT+CGNSINF response
@@ -46,6 +48,9 @@ impl AtRequest for GetGnssReport {
 
 impl AtParseLine for GnssReport {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
+        Self::from_line_timestamped(line, Instant::now())
+    }
+    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
         // <GNSS run status>,<Fix status>,<UTC date & Time>,
         // <Latitude>,<Longitude>,<MSL Altitude>,
         // <Speed Over Ground>,<Course Over Ground>,<Fix Mode>,
@@ -94,21 +99,24 @@ impl AtParseLine for GnssReport {
                 let hpa = hpa.parse().ok();
                 let vpa = vpa.parse().ok();
                 let satellites_in_view = satellites_in_view.parse().unwrap_or_default();
-                Ok(Self::Fix(NavInfo {
-                    utc,
-                    latitude,
-                    longitude,
-                    altitude,
-                    speed_over_ground,
-                    course_over_ground,
-                    fix_mode,
-                    hdop,
-                    pdop,
-                    vdop,
-                    hpa,
-                    vpa,
-                    satellites_in_view,
-                }))
+                Ok(Self::Fix {
+                    instant,
+                    nav_info: NavInfo {
+                        utc,
+                        latitude,
+                        longitude,
+                        altitude,
+                        speed_over_ground,
+                        course_over_ground,
+                        fix_mode,
+                        hdop,
+                        pdop,
+                        vdop,
+                        hpa,
+                        vpa,
+                        satellites_in_view,
+                    },
+                })
             } else {
                 Ok(Self::NoFix {
                     satellites_in_view: satellites_in_view.parse().ok(),

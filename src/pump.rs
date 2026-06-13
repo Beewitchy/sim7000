@@ -8,7 +8,7 @@ use embassy_sync::{
     watch,
     zerocopy_channel::{Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
-use embassy_time::{Duration, with_timeout};
+use embassy_time::{Duration, Instant, with_timeout};
 use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
@@ -22,7 +22,7 @@ use crate::{
     },
     at_command::{cfun, unsolicited},
     log,
-    modem::{RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener, AppNetworkMap},
+    modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener},
     read::ModemReader,
 };
 
@@ -53,15 +53,16 @@ where
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
-        let line = self.reader.read_line().await?;
+        let (line, read_instant) = self.reader.read_line().await?;
 
         if line.is_empty() {
             log::warn!("received empty line from modem");
         }
 
-        if let Ok(message) = Urc::from_line(&line) {
-            // First, check if it's an unsolicited message
+        let read_instant = read_instant.copied().unwrap_or_else(|| Instant::now());
 
+        if let Ok(message) = Urc::from_line_timestamped(&line, read_instant) {
+            // First check if it's an unsolicited message
             log::debug!("Got URC: {:?}", line);
             match message {
                 Urc::NetworkRegistration(registration) => {
@@ -103,6 +104,10 @@ where
                     slot.peek().events.send(message.message);
                     return Ok(());
                 }
+                Urc::Dst(_dst) => {
+                    log::info!("Got dst update {:?}. TODO: store local time.", _dst);
+                    return Ok(());
+                }
                 Urc::GnssReport(report) => {
                     self.gnss.signal(report);
                     return Ok(());
@@ -122,7 +127,8 @@ where
                     return Ok(());
                 }
                 Urc::PowerDown(PowerDown::Normal) => {
-                    // Normal power down isn't an unsolicited response but it's parsed here
+                    // Normal power down isn't an unsolicited response but
+                    //  it's parsed here since other PowerDown messages are
                     let mut buf =
                         with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
                     *buf = ResponseCode::PowerDown(PowerDown::Normal);
@@ -130,16 +136,24 @@ where
                     self.ready.send(ReadyState::PowerDown);
                     return Ok(());
                 }
-                Urc::CPin(cpin) => {
-                    // This can actually be a solicited response--
-                    // without a stateful parser there's no way to
-                    // know, so just assume it is and put it in
-                    // the response queue
-                    let mut buf =
-                        with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
-                    *buf = ResponseCode::CPin(cpin);
-                    buf.send_done();
+                Urc::Psuttz(_ttz) => {
+                    log::info!("Got local-time update {:?}. TODO: store local time.", _ttz);
                     return Ok(());
+                }
+                Urc::CPin(cpin) => {
+                    // This can actually be a solicited response but without a
+                    // stateful parser there's no way to know, so just assume
+                    // it is and put it in the response queue
+                    if let Some(mut buf) = self.generic_response.try_send() {
+                        *buf = ResponseCode::CPin(cpin);
+                        buf.send_done();
+                        return Ok(());
+                    } else {
+                        // No room to immediately return the response, but
+                        // we want to avoid locking up if the reader is
+                        // stalled so error out rather than waiting
+                        return Err(Error::BufferOverflow);
+                    }
                 }
                 Urc::CFun(cfun) => {
                     match cfun.0 {
@@ -175,7 +189,7 @@ where
             // and a sms message can't be unambiguously parsed seperatly
             if let ResponseCode::SmsMessage(sms) = &mut response {
                 log::info!("Got SMS from: {:?}, reading message", sms.sender);
-                let line = self.reader.read_line().await?;
+                let (line, _) = self.reader.read_line().await?;
 
                 if line.is_empty() {
                     log::warn!("received empty line from modem");

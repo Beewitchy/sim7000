@@ -114,6 +114,7 @@ pub struct MappedReceiveSlotRef<'r, M: RawMutex, U, T> {
     _variance: PhantomData<&'r mut T>,
 }
 
+
 // Derived from core::mem::DropGuard--takes the value in the
 //  ManuallyDrop cell and calls receive_done before it drops
 impl<'r, M: RawMutex, T> Drop for ReceiveSlotRef<'r, M, T> {
@@ -180,6 +181,14 @@ impl<'r, M: RawMutex, U, T> core::ops::DerefMut for MappedReceiveSlotRef<'r, M, 
         // SAFETY: data is created from the original slot ref,
         // so it's always a referenceable ptr
         unsafe { self.data.as_mut() }
+    }
+}
+
+impl<'r, M: RawMutex, U, T> AsRef<U> for MappedReceiveSlotRef<'r, M, U, T> {
+    fn as_ref(&self) -> &U {
+        // SAFETY: data is created from the original slot ref,
+        // so it's always a referenceable ptr
+        unsafe { self.data.as_ref() }
     }
 }
 
@@ -348,7 +357,7 @@ pub trait ExpectResponse<M: RawMutex>: Sized {
 impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {
     async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
         runner
-            .expect_response::<Self>()
+            .expect_response::<T>()
             .await
             .map(|response| response.clone())
     }

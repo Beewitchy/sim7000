@@ -1,17 +1,22 @@
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex, pipe::Pipe,
-    zerocopy_channel::Channel as ZerocopyChannel, channel::Channel,
-    signal::Signal, watch::Watch,
+    blocking_mutex::raw::RawMutex, channel::Channel, pipe::Pipe, signal::Signal, watch::Watch,
+    zerocopy_channel::Channel as ZerocopyChannel,
 };
 
-use super::{power::PowerSignal, RawAtCommand, SmsState, ReadyState};
+use super::{RawAtCommand, ReadyState, SmsState, power::PowerSignal};
 use crate::{
-    StateSignal, at_command::{
-        ResponseCode, unsolicited::{
+    StateSignal,
+    at_command::{
+        ResponseCode,
+        unsolicited::{
             ConnectionMessage, GnssReport, NetworkRegistration, NewSmsIndex, RegistrationStatus,
             VoltageWarning,
-        }
-    }, drop::DropChannel, slot::Slot, tcp::TCP_RX_BUF_LEN, util::{Lagged, RingChannel}
+        },
+    },
+    drop::DropChannel,
+    slot::Slot,
+    tcp::TCP_RX_BUF_LEN,
+    util::{Lagged, RingChannel},
 };
 
 pub type TcpRxPipe<M> = Pipe<M, TCP_RX_BUF_LEN>;
@@ -23,10 +28,16 @@ pub(crate) struct PacketChannels<'c, M: RawMutex> {
 }
 
 impl<'c, M: RawMutex> PacketChannels<'c, M> {
-    pub(crate) fn new(commands_buf: &'c mut [RawAtCommand], response_buf: &'c mut [ResponseCode]) -> Self {
+    pub(crate) fn new(
+        commands_buf: &'c mut [RawAtCommand],
+        response_buf: &'c mut [ResponseCode],
+    ) -> Self {
         let commands = ZerocopyChannel::new(commands_buf);
         let generic_response = ZerocopyChannel::new(response_buf);
-        Self { commands, generic_response, }
+        Self {
+            commands,
+            generic_response,
+        }
     }
 }
 
@@ -66,7 +77,10 @@ pub struct ModemContext<'c, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) packet_channels: PacketChannels<'c, M>,
 }
 
-impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS> where M: RawMutex {
+impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS>
+where
+    M: RawMutex,
+{
     pub const fn new(tcp: TcpContext<M, TCP_SLOTS>) -> Self {
         Self {
             active_signal: PowerSignal::new(),
@@ -89,8 +103,15 @@ impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS> where M: RawMutex {
     }
 }
 
-impl<'c, M, const TCP_SLOTS: usize> ModemContext<'c, M, TCP_SLOTS> where M: RawMutex {
-    pub fn new(tcp: TcpContext<M, TCP_SLOTS>, commands_buf: &'c mut [RawAtCommand], response_buf: &'c mut [ResponseCode]) -> Self {
+impl<'c, M, const TCP_SLOTS: usize> ModemContext<'c, M, TCP_SLOTS>
+where
+    M: RawMutex,
+{
+    pub fn new(
+        tcp: TcpContext<M, TCP_SLOTS>,
+        commands_buf: &'c mut [RawAtCommand],
+        response_buf: &'c mut [ResponseCode],
+    ) -> Self {
         Self {
             shared: Shared::new(tcp),
             packet_channels: PacketChannels::new(commands_buf, response_buf),
@@ -107,7 +128,10 @@ pub struct TcpContext<M: RawMutex, const N: usize> {
     pub(crate) slots: [Slot<TcpSlot<M>>; N],
 }
 
-impl<M> TcpSlot<M> where M: RawMutex {
+impl<M> TcpSlot<M>
+where
+    M: RawMutex,
+{
     pub const fn new() -> Self {
         TcpSlot {
             rx: Pipe::new(),
@@ -116,7 +140,10 @@ impl<M> TcpSlot<M> where M: RawMutex {
     }
 }
 
-impl<M, const N: usize> TcpContext<M, N> where M: RawMutex {
+impl<M, const N: usize> TcpContext<M, N>
+where
+    M: RawMutex,
+{
     pub const fn new(slots: [Slot<TcpSlot<M>>; N]) -> Self {
         Self { slots }
     }
@@ -147,7 +174,10 @@ pub struct TcpToken<'c, M: RawMutex> {
     events: &'c RingChannel<M, ConnectionMessage, 8>,
 }
 
-impl<'c, M> TcpToken<'c, M> where M: RawMutex{
+impl<'c, M> TcpToken<'c, M>
+where
+    M: RawMutex,
+{
     pub fn ordinal(&self) -> usize {
         self.ordinal
     }

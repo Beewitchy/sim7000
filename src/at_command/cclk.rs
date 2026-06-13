@@ -1,3 +1,5 @@
+use embassy_time::Instant;
+
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CCLK
@@ -26,6 +28,7 @@ where
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CclkTime<Time = UtcTime> {
     pub time: Time,
+    pub instant: Instant,
 }
 
 impl<Time> AtParseLine for CclkTime<Time>
@@ -33,6 +36,10 @@ where
     Time: FromCclkStr,
 {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
+        Self::from_line_timestamped(line, Instant::now())
+    }
+
+    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CCLK:")
             .ok_or("Missing '+CCLK:'")?
@@ -43,7 +50,7 @@ where
             .strip_suffix('"')
             .ok_or("Missing string argument")?;
         let (time, _) = Time::from_cclk_str(line).ok_or("couldn't parse time")?;
-        Ok(CclkTime { time })
+        Ok(CclkTime { time, instant })
     }
 }
 

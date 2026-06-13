@@ -1,34 +1,60 @@
 use core::str::from_utf8;
 use embassy_sync::{blocking_mutex::raw::RawMutex, pipe::Pipe};
+use embassy_time::Instant;
 use embedded_io_async::Read;
-use heapless::{Vec};
+use heapless::Vec;
 
-use crate::{log, Error};
+use crate::{Error, log};
 
 pub struct ModemReader<'context, M: RawMutex> {
     read: &'context Pipe<M, 2048>,
     buffer: Vec<u8, 256>,
+    line_timestamps: Vec<(usize, Instant), 3>,
     line_end: Option<usize>,
 }
 
-impl<'context, M> ModemReader<'context, M> where M: RawMutex {
+impl<'context, M> ModemReader<'context, M>
+where
+    M: RawMutex,
+{
     pub fn new(read: &'context Pipe<M, 2048>) -> ModemReader<'context, M> {
         ModemReader {
             read,
             buffer: Vec::new(),
+            line_timestamps: Vec::new(),
             line_end: None,
         }
     }
 
-    pub async fn read_line(&mut self) -> Result<&str, Error> {
+    fn drain_line(&mut self, line_end: usize) {
+        self.buffer.rotate_left(line_end);
+        self.buffer.truncate(self.buffer.len() - line_end);
+
+        if let Some(next_timestamp_index) = self
+            .line_timestamps
+            .iter()
+            .position(|(offset, _)| *offset > line_end)
+        {
+            if let Some(last_outdated_index) = next_timestamp_index.checked_sub(1) {
+                self.line_timestamps.drain(..last_outdated_index);
+            }
+            if let Some((offset, _)) = self.line_timestamps.first_mut() {
+                *offset -= line_end;
+            }
+        } else {
+            self.line_timestamps.clear();
+        }
+    }
+
+    pub async fn read_line(&mut self) -> Result<(&str, Option<&Instant>), Error> {
         if let Some(line_end) = self.line_end.take() {
-            // Remove the line from the buffer
-            self.buffer.rotate_left(line_end);
-            self.buffer.truncate(self.buffer.len() - (line_end));
+            // Remove the previously read line from the buffer
+            self.drain_line(line_end);
         }
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
+            #[cfg(debug_assertions)]
             if !self.buffer.is_empty() {
                 match from_utf8(&self.buffer) {
                     Ok(line) => log::trace!("CURRENT BUFFER (utf-8) {:?}", line),
@@ -41,12 +67,12 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
                 // since there is no CRLF we handle this as a special case.
                 // Notably this happens after a CIPSEND command
 
-                // Remove the prompt from the buffer
-                self.buffer.rotate_left(MODEM_INPUT_PROMPT.len());
-                self.buffer
-                    .truncate(self.buffer.len() - MODEM_INPUT_PROMPT.len());
+                self.drain_line(MODEM_INPUT_PROMPT.len());
 
-                return Ok(MODEM_INPUT_PROMPT);
+                return Ok((
+                    MODEM_INPUT_PROMPT,
+                    self.line_timestamps.first().map(|(_, instant)| instant),
+                ));
             } else if let Some(position) = self
                 .buffer
                 .windows(LINE_END.len())
@@ -64,18 +90,18 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
 
                 // Ignore empty lines, as well as echoed lines (which end with \r\r\n)
                 if line.trim().is_empty() || line.ends_with("\r\r") {
-                    self.buffer.rotate_left(line_end);
-                    self.buffer.truncate(self.buffer.len() - line_end);
-
+                    self.drain_line(line_end);
                     continue;
                 }
 
                 self.line_end = Some(line_end);
 
                 let line = line.trim(); // The modem likes to be inconsistent with white space
-                // let line = heapless::String::try_from(line).map_err(|_| Error::InvalidUtf8)?;
 
-                return Ok(line);
+                return Ok((
+                    line,
+                    self.line_timestamps.first().map(|(_, instant)| instant),
+                ));
             }
 
             if self.buffer.capacity() == self.buffer.len() {
@@ -92,6 +118,15 @@ impl<'context, M> ModemReader<'context, M> where M: RawMutex {
             )
             .await
             .map_err(|_| Error::Serial)?;
+
+            // Store the read time for this chunk if there is space
+            //  otherwise extend the last chunk
+            if self.line_timestamps.len() < self.line_timestamps.capacity() {
+                let _ = self.line_timestamps
+                    .push((self.buffer.len() + amount, Instant::now()));
+            } else if let Some((offset, _)) = self.line_timestamps.last_mut() {
+                *offset = self.buffer.len() + amount;
+            }
 
             self.buffer
                 .extend_from_slice(&buf[..amount])

@@ -1,4 +1,5 @@
 use heapless::String;
+use embassy_time::Instant;
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
 
@@ -50,15 +51,20 @@ pub enum SyncNtpStatusCode {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkTime {
-    pub code: SyncNtpStatusCode,
     #[cfg(feature = "chrono")]
     pub time: Option<chrono::DateTime<chrono::Utc>>,
     #[cfg(not(feature = "chrono"))]
     pub time: Option<super::unsolicited::DateTime>,
+    pub instant: Instant,
+    pub code: SyncNtpStatusCode,
 }
 
 impl AtParseLine for NetworkTime {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
+        Self::from_line_timestamped(line, Instant::now())
+    }
+
+    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CNTP:")
             .ok_or("Missing '+CNTP:'")?
@@ -88,7 +94,7 @@ impl AtParseLine for NetworkTime {
             _ => return Err("Unexpected response".into()),
         };
 
-        Ok(NetworkTime { code, time })
+        Ok(NetworkTime { time, instant, code })
     }
 }
 
