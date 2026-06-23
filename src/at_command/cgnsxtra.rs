@@ -3,7 +3,7 @@ use crate::util::collect_array;
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk, cgnscold::XtraStatus};
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ToggleXtra {
     Disable = 0,
@@ -22,6 +22,11 @@ impl AtRequest for GnssXtra {
     }
 }
 
+/// AT+CGNSXTRA?
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GetGnssXtra;
+
 /// AT+CGNSXTRA
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -33,6 +38,13 @@ pub struct GnssXtraInfo {
     pub valid_diff_hours: Option<u8>,
     pub valid_duration_hours: u32,
     pub download_time: cclk::UtcTime,
+}
+
+impl AtRequest for GetGnssXtra {
+    type Response = (ToggleXtra, GenericOk);
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        write!(buf, "AT+CGNSXTRA?\r")
+    }
 }
 
 impl AtRequest for ValidateGnssXtra {
@@ -63,6 +75,29 @@ impl AtResponse for GnssXtraInfo {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::XtraInfo(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+impl AtParseLine for ToggleXtra {
+    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+        let line = line
+            .strip_prefix("+CGNSXTRA: ")
+            .ok_or("Missing '+CGNSXTRA: '")?;
+
+        match line {
+            "0" => Ok(ToggleXtra::Disable),
+            "1" => Ok(ToggleXtra::Enable),
+            _ => Err("Invalid response, expected 0, 1".into()),
+        }
+    }
+}
+
+impl AtResponse for ToggleXtra {
+    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
+        match code {
+            ResponseCode::XtraEnabled(v) => Some(v),
             _ => None,
         }
     }

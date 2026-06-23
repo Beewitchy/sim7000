@@ -878,6 +878,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             .run(cgnsmod::SetGnssWorkModeSet(workmode_set))
             .await?;
 
+        reports.reset();
+
         let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
         if current_set != workmode_set {
             // Failed to configure
@@ -1071,9 +1073,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
 
-        commands
-            .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
+        let (status, _) = commands
+            .run(cgnsxtra::GetGnssXtra)
             .await?;
+        if status != cgnsxtra::ToggleXtra::Enable {
+            let _ = commands
+                .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
+                .await;
+        }
 
         let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
         let info = match info {
@@ -1084,10 +1091,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 info?
             }
         };
-
-        commands
-            .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
-            .await?;
 
         enum GnssStateRelevancy {
             Unknown,
