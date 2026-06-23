@@ -25,7 +25,7 @@ impl core::str::FromStr for WorkMode {
 }
 
 /// AT+CGNSMOD=GLONASS, BEIDOU, GALILIEAN, [qzss] (if supported)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssWorkModeSet {
     pub glonass: WorkMode,
@@ -33,6 +33,17 @@ pub struct GnssWorkModeSet {
     pub galilean: WorkMode,
     /// Only on supported devices
     pub qzss: Option<WorkMode>,
+}
+
+impl Default for GnssWorkModeSet {
+    fn default() -> Self {
+        Self {
+            glonass: WorkMode::Start,
+            beidou: WorkMode::Stop,
+            galilean: WorkMode::Stop,
+            qzss: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -64,7 +75,7 @@ impl AtRequest for SetGnssWorkModeSet {
 }
 
 impl AtRequest for GetGnssWorkModeSet {
-    type Response = (GnssWorkModeSet, GenericOk);
+    type Response = (Option<GnssWorkModeSet>, GenericOk);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CGNSMOD?\r")
     }
@@ -103,7 +114,7 @@ impl AtParseLine for GnssWorkModeSet {
     }
 }
 
-impl AtResponse for GnssWorkModeSet {
+impl AtResponse for Option<GnssWorkModeSet> {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::GnssWorkModeSet(v) => Some(v),

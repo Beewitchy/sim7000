@@ -336,7 +336,7 @@ pub enum ResponseCode {
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
     XtraInfo(cgnsxtra::GnssXtraInfo),
-    GnssWorkModeSet(cgnsmod::GnssWorkModeSet),
+    GnssWorkModeSet(Option<cgnsmod::GnssWorkModeSet>),
     GnssReport(cgnsinf::GnssReport),
     PowerDown(unsolicited::PowerDown),
     Imei(Imei),

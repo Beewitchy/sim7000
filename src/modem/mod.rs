@@ -824,6 +824,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         commands.run(cgnspwr::SetGnssPower(true)).await?;
 
         let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
+        let current_set = current_set.unwrap_or_default();
 
         let allow_multiple = (current_set.glonass as u8
             + current_set.beidou as u8
@@ -872,9 +873,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 break;
             }
         }
+        let workmode_set = Some(workmode_set);
         commands
-            .run(cgnsmod::SetGnssWorkModeSet(Some(workmode_set)))
+            .run(cgnsmod::SetGnssWorkModeSet(workmode_set))
             .await?;
+
+        let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
+        if current_set != workmode_set {
+            // Failed to configure
+            return Err(Error::InvalidContext);
+        }
 
         Ok(Some(Gnss::new(
             reports,
@@ -1062,6 +1070,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let mut commands = self.commands.lock().await;
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
+
+        commands
+            .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
+            .await?;
 
         let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
         let info = match info {
