@@ -1080,15 +1080,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .await;
         }
 
+        commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
         let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
-        let info = match info {
-            Ok(info) => info,
-            Err(_) => {
-                commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
-                let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
-                info?
-            }
-        };
+        let info = info?;
 
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
