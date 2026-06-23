@@ -1073,12 +1073,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
 
-        let (status, _) = commands
-            .run(cgnsxtra::GetGnssXtra)
-            .await?;
-        if status.inner() != cgnsxtra::ToggleXtra::Enable {
+        let (status, _) = commands.run(cgnsxtra::GetGnssXtra).await?;
+        if status.inner() == cgnsxtra::ToggleXtra::Enable {
             let _ = commands
-                .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
+                .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Disable))
                 .await;
         }
 
@@ -1091,6 +1089,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 info?
             }
         };
+
+        commands
+            .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
+            .await?;
 
         enum GnssStateRelevancy {
             Unknown,
