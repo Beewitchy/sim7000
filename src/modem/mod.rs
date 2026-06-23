@@ -1076,7 +1076,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let (status, _) = commands
             .run(cgnsxtra::GetGnssXtra)
             .await?;
-        if status != cgnsxtra::ToggleXtra::Enable {
+        if status.inner() != cgnsxtra::ToggleXtra::Enable {
             let _ = commands
                 .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
                 .await;

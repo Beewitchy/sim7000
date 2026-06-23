@@ -1,6 +1,5 @@
 use core::{
-    fmt::Debug,
-    num::{ParseFloatError, ParseIntError},
+    fmt::Debug, marker::PhantomData, num::{ParseFloatError, ParseIntError}
 };
 use embassy_time::Instant;
 
@@ -303,6 +302,30 @@ impl<'r, R> core::ops::DerefMut for TimestampedRef<'r, R> {
     }
 }
 
+pub struct MetaResponse<T, U>(U, PhantomData<T>);
+
+impl<T, U> MetaResponse<T, U> {
+    pub const fn new(u: U) -> Self {
+        Self(u, PhantomData)
+    }
+
+    pub fn inner(self) -> U {
+        self.0
+    }
+}
+
+impl<T, U> AsRef<U> for MetaResponse<T, U> {
+    fn as_ref(&self) -> &U {
+        &self.0
+    }
+}
+
+impl<T, U> AsMut<U> for MetaResponse<T, U> {
+    fn as_mut(&mut self) -> &mut U {
+        &mut self.0
+    }
+}
+
 pub trait AtResponse: Sized {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self>;
 }
@@ -335,7 +358,6 @@ pub enum ResponseCode {
     DownloadInfo(DownloadInfo),
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
-    XtraEnabled(cgnsxtra::ToggleXtra),
     XtraInfo(cgnsxtra::GnssXtraInfo),
     GnssWorkModeSet(Option<cgnsmod::GnssWorkModeSet>),
     GnssReport(cgnsinf::GnssReport),
@@ -382,7 +404,6 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, ResponseCode::DownloadInfo))
             .or_else(parse(line, ResponseCode::CopyResponse))
             .or_else(parse(line, ResponseCode::XtraStatus))
-            .or_else(parse(line, ResponseCode::XtraEnabled))
             .or_else(parse(line, ResponseCode::XtraInfo))
             .or_else(parse(line, ResponseCode::GnssWorkModeSet))
             .or_else(parse(line, ResponseCode::GnssReport))

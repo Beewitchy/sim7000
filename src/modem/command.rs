@@ -13,7 +13,7 @@ use heapless::{String, Vec};
 
 use crate::{
     Error,
-    at_command::{AtRequest, AtResponse, Either, ResponseCode, Seq},
+    at_command::{AtRequest, AtResponse, Either, MetaResponse, ResponseCode, Seq},
     log,
 };
 
@@ -113,7 +113,6 @@ pub struct MappedReceiveSlotRef<'r, M: RawMutex, U, T> {
     _orig: ReceiveSlotRef<'r, M, T>,
     _variance: PhantomData<&'r mut T>,
 }
-
 
 // Derived from core::mem::DropGuard--takes the value in the
 //  ManuallyDrop cell and calls receive_done before it drops
@@ -440,5 +439,15 @@ impl<T1: AtResponse + Clone, T2: AtResponse + Clone, M: RawMutex> ExpectResponse
             Ok(embassy_futures::select::Either::Second(item)) => Ok(Either::T2(item.clone())),
             Err(err) => Err(err),
         }
+    }
+}
+
+impl<T: AtResponse + Clone, O: TryFrom<T>, M: RawMutex> ExpectResponse<M> for MetaResponse<T, O> {
+    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        let o = <T as ExpectResponse<M>>::expect(runner)
+            .await?
+            .try_into()
+            .map_err(|_| Error::UnknownResponse)?;
+        Ok(Self::new(o))
     }
 }

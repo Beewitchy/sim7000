@@ -19,6 +19,7 @@ pub struct GnssHotStart;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
 pub enum XtraStatus {
     Success = 0,
     DoesntExist = 1,
