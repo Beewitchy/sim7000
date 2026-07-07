@@ -67,6 +67,7 @@ pub mod httptofs;
 pub mod ifc;
 pub mod ipr;
 pub mod sapbr;
+pub mod sgns;
 
 pub use at::At;
 pub use ate::SetEcho;

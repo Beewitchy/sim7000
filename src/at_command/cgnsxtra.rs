@@ -52,7 +52,7 @@ pub struct ValidateGnssXtra;
 pub struct GnssXtraInfo {
     pub valid_diff_hours: Option<u8>,
     pub valid_duration_hours: u32,
-    pub download_time: cclk::UtcTime,
+    pub download_time: cclk::UtcDateTime,
 }
 
 impl AtRequest for GetGnssXtra {

@@ -5,7 +5,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 /// AT+CCLK
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GetTime<Time = UtcTime>(core::marker::PhantomData<Time>);
+pub struct GetTime<Time = UtcDateTime>(core::marker::PhantomData<Time>);
 
 impl<Time> GetTime<Time> {
     pub const fn new() -> Self {
@@ -26,7 +26,7 @@ where
 /// Time returned by +CCLK
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CclkTime<Time = UtcTime> {
+pub struct CclkTime<Time = UtcDateTime> {
     pub time: Time,
     pub instant: Instant,
 }
@@ -54,7 +54,7 @@ where
     }
 }
 
-impl AtResponse for CclkTime<UtcTime> {
+impl AtResponse for CclkTime<UtcDateTime> {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::CclkTime(time) => Some(time),
@@ -90,10 +90,10 @@ pub trait FromCclkStr: core::fmt::Debug + Sized {
 
 #[cfg(feature = "chrono")]
 /// Common type alias for UTC times parsed from responses
-pub type UtcTime = chrono::DateTime<chrono::Utc>;
+pub type UtcDateTime = chrono::DateTime<chrono::Utc>;
 #[cfg(not(feature = "chrono"))]
 /// Common type alias for UTC times parsed from responses
-pub type UtcTime = super::unsolicited::DateTime;
+pub type UtcDateTime = super::unsolicited::DateTime;
 
 impl FromCclkStr for super::unsolicited::DateTime {
     fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
@@ -171,7 +171,7 @@ impl FromCclkStr for chrono::DateTime<chrono::Utc> {
 
 /// Parse a yyyymmddhhmmss.sss format date-time like returned from
 /// gnss CGNSINF or UGNSINF requests. Assumed to be utc
-pub fn parse_18char_str(s: &str) -> Option<UtcTime> {
+pub fn parse_18char_str(s: &str) -> Option<UtcDateTime> {
     #[cfg(feature = "chrono")]
     {
         use chrono::format::{Fixed, Item, Numeric, Pad};
@@ -202,7 +202,7 @@ pub fn parse_18char_str(s: &str) -> Option<UtcTime> {
 /// The last two parameters (timezone & offset) are ignored
 ///  since they indicate the local timezone, so they aren't
 ///  relevant when just the UTC time itself is wanted
-pub fn parse_psuttz_time(s: &str) -> Option<UtcTime> {
+pub fn parse_psuttz_time(s: &str) -> Option<UtcDateTime> {
     #[cfg(feature = "chrono")]
     {
         //year, month, day, hour, min, sec, "time_zone", dst
@@ -259,5 +259,81 @@ pub fn parse_psuttz_time(s: &str) -> Option<UtcTime> {
             minute,
             second,
         }
+    }
+}
+
+/// Parse utc date and time arguments from +SGNSCMD message data, like
+/// 'yyyy-mm-dd,hh:mm:ss'.
+pub fn parse_sgnscmd_time(date: Option<&str>, time: &str, timestamp: &str) -> Option<UtcDateTime> {
+    #[cfg(feature = "chrono")]
+    {
+        use chrono::format::{Item, Numeric, Pad};
+        let mut parsed = Default::default();
+        if let Some(date) = date {
+            let _ = chrono::format::parse_and_remainder(
+                &mut parsed,
+                date,
+                [
+                    Item::Numeric(Numeric::Year, Pad::Zero),
+                    Item::Literal("-"),
+                    Item::Numeric(Numeric::Month, Pad::Zero),
+                    Item::Literal("-"),
+                    Item::Numeric(Numeric::Day, Pad::Zero),
+                    Item::Literal(","),
+                ]
+                .into_iter(),
+            )
+            .ok()?;
+        }
+        let _ = chrono::format::parse_and_remainder(
+            &mut parsed,
+            time,
+            [
+                Item::Numeric(Numeric::Hour, Pad::Zero),
+                Item::Literal(":"),
+                Item::Numeric(Numeric::Minute, Pad::Zero),
+                Item::Literal(":"),
+                Item::Numeric(Numeric::Second, Pad::Zero),
+            ]
+            .into_iter(),
+        )
+        .ok()?;
+        let timestamp_millis = if let Some(timestamp) = timestamp.strip_prefix("0x") {
+            i64::from_str_radix(timestamp, 16).ok()?
+        } else {
+            timestamp.parse().ok()?
+        };
+        let timestamp = timestamp_millis / 1000;
+        let nanosecond = (timestamp_millis % 1000) * 1_000_000;
+        let _ = parsed.set_nanosecond(nanosecond).ok()?;
+        let _ = parsed.set_timestamp(timestamp).ok()?;
+        let dt = parsed.to_datetime_with_timezone(&chrono::Utc).ok()?;
+        Some(dt)
+    }
+    #[cfg(not(feature = "chrono"))]
+    {
+        let (year, month, day) = if let Some(date) = date {
+            let (year, s) = s.split_once('-')?;
+            let year = year.parse().ok()?;
+            let (month, s) = s.split_once('-')?;
+            let month = month.parse().ok()?;
+            let (day, s) = s.split_once(',')?;
+            let day = day.parse().ok()?;
+            (year, month, day)
+        } else {
+            (1970, 1, 1)
+        };
+        let (hour, s) = s.split_once(':')?;
+        let hour = hour.parse().ok()?;
+        let (minute, s) = s.split_once(':')?;
+        let minute = minute.parse().ok()?;
+        Some(Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+        })
     }
 }

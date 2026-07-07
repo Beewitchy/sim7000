@@ -2,7 +2,7 @@ use crate::at_command::{AtParseErr, AtParseLine, cclk};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Psuttz(pub cclk::UtcTime);
+pub struct Psuttz(pub cclk::UtcDateTime);
 
 impl AtParseLine for Psuttz {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {

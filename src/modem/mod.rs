@@ -954,7 +954,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(network_time)
     }
 
-    pub async fn query_local_time(&mut self) -> Result<cclk::UtcTime, Error> {
+    pub async fn query_local_time(&mut self) -> Result<cclk::UtcDateTime, Error> {
         self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime::new())
             .await
             .map(|(utc, _)| utc.time)
@@ -1063,7 +1063,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///  longer it should be valid for.
     pub async fn enable_gnss_xtra(
         &mut self,
-        last_known_fix: Option<cclk::UtcTime>,
+        last_known_fix: Option<cclk::UtcDateTime>,
     ) -> Result<cgnsxtra::GnssXtraInfo, ColdStartErr> {
         self.async_drop().await?;
 
