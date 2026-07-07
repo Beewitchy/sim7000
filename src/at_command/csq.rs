@@ -15,11 +15,19 @@ impl AtRequest for GetSignalQuality {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SignalQuality {
-    /// Signal strength percenage
-    pub signal_strength: Option<f32>,
-
-    /// Inverse of Bit-Error Rate percentage
+    pub rssi: Option<i32>,
     pub signal_quality: Option<f32>,
+}
+
+impl SignalQuality {
+    /// Signal strength percenage
+    pub fn signal_strength(&self) -> Option<f32> {
+        self.rssi.map(|rssi| {
+            // normalize rssi to 0, then percent can be calculated
+            let normalized_rssi = rssi + 115;
+            100.0 * (normalized_rssi as f32 / 63f32)
+        })
+    }
 }
 
 impl AtParseLine for SignalQuality {
@@ -37,12 +45,6 @@ impl AtParseLine for SignalQuality {
             _ => return Err("Invalid RSSI value".into()),
         };
 
-        let signal_strength = rssi.map(|rssi| {
-            // normalize rssi to 0, then percent can be calculated
-            let normalized_rssi = rssi + 115;
-            100.0 * (normalized_rssi as f32 / 63f32)
-        });
-
         let bit_error_rate = match ber {
             0 => Some(0.14),
             1 => Some(0.28),
@@ -56,9 +58,11 @@ impl AtParseLine for SignalQuality {
             _ => return Err("Invalid BER value".into()),
         };
 
+        let signal_quality = bit_error_rate.map(|ber| 100.0 - ber);
+
         Ok(SignalQuality {
-            signal_strength,
-            signal_quality: bit_error_rate.map(|ber| 100.0 - ber),
+            rssi,
+            signal_quality,
         })
     }
 }
