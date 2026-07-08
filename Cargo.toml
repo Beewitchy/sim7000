@@ -28,7 +28,7 @@ bitflags = "2.13"
 [features]
 default = ["log", "chrono"]
 log = ["dep:log"]
-defmt = ["dep:defmt", "embassy-time/defmt", "heapless/defmt"]
+defmt = ["dep:defmt", "embassy-time/defmt", "embassy-sync/defmt", "heapless/defmt", "chrono?/defmt"]
 chrono = ["dep:chrono"]
 
 [patch.crates-io]

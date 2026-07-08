@@ -1,3 +1,6 @@
+#[cfg(feature = "defmt")]
+use defmt::bitflags;
+#[cfg(not(feature = "defmt"))]
 use bitflags::bitflags;
 use embassy_time::Duration;
 
@@ -50,8 +53,7 @@ impl UartBaudRate {
 bitflags! {
     /// Config flags for NmeaType config variable. Names refer to
     /// NMEA message identifiers.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug))]
     #[repr(transparent)]
     pub struct NmeaType: u8 {
         /// GPGSV: GPS satellites in view.
