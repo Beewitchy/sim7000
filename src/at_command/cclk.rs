@@ -5,19 +5,16 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 /// AT+CCLK
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GetTime<Time = UtcDateTime>(core::marker::PhantomData<Time>);
+pub struct GetTime;
 
-impl<Time> GetTime<Time> {
+impl GetTime {
     pub const fn new() -> Self {
-        Self(core::marker::PhantomData)
+        Self
     }
 }
 
-impl<Time> AtRequest for GetTime<Time>
-where
-    Time: FromCclkStr,
-{
-    type Response = (CclkTime<Time>, GenericOk);
+impl AtRequest for GetTime {
+    type Response = (CclkTime, GenericOk);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CCLK?\r")
     }
@@ -26,15 +23,12 @@ where
 /// Time returned by +CCLK
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CclkTime<Time = UtcDateTime> {
-    pub time: Time,
+pub struct CclkTime {
+    pub time: types::LocalDateTime,
     pub instant: Instant,
 }
 
-impl<Time> AtParseLine for CclkTime<Time>
-where
-    Time: FromCclkStr,
-{
+impl AtParseLine for CclkTime {
     fn from_line(line: &str) -> Result<Self, AtParseErr> {
         Self::from_line_timestamped(line, Instant::now())
     }
@@ -49,12 +43,12 @@ where
             .ok_or("Missing string argument")?
             .strip_suffix('"')
             .ok_or("Missing string argument")?;
-        let (time, _) = Time::from_cclk_str(line).ok_or("couldn't parse time")?;
+        let (time, _) = types::LocalDateTime::from_cclk_str(line).ok_or("couldn't parse time")?;
         Ok(CclkTime { time, instant })
     }
 }
 
-impl AtResponse for CclkTime<UtcDateTime> {
+impl AtResponse for CclkTime {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::CclkTime(time) => Some(time),
@@ -62,14 +56,6 @@ impl AtResponse for CclkTime<UtcDateTime> {
         }
     }
 }
-
-// todo: ellie (18.05.2026) - Stateful request/response handling?
-// impl<Time> AtParseResponse for GetCclkTime<Time> {
-//     fn parse_response(code: &str) -> Option<Self::Response> {
-//         //...
-//         None
-//     }
-// }
 
 /// Parse a 80/01/06,00:37:28+00 type local date-time
 /// (as returned from CCLK)
@@ -89,11 +75,23 @@ pub trait FromCclkStr: core::fmt::Debug + Sized {
 }
 
 #[cfg(feature = "chrono")]
-/// Common type alias for UTC times parsed from responses
-pub type UtcDateTime = chrono::DateTime<chrono::Utc>;
+pub mod types {
+    /// Common type alias for UTC times parsed from responses
+    pub type UtcDateTime = chrono::DateTime<chrono::Utc>;
+    /// Common type alias for local tz times parsed from responses
+    pub type LocalDateTime = chrono::DateTime<chrono::FixedOffset>;
+    /// Common type alias for timezone offset parsed from responses
+    pub type LocalTimeOffset = chrono::FixedOffset;
+}
 #[cfg(not(feature = "chrono"))]
-/// Common type alias for UTC times parsed from responses
-pub type UtcDateTime = super::unsolicited::DateTime;
+pub mod types {
+    /// Common type alias for UTC times parsed from responses
+    pub type UtcDateTime = super::unsolicited::DateTime;
+    /// Common type alias for local tz times parsed from responses
+    pub type LocalDateTime = super::unsolicited::DateTime;
+    /// Common type alias for timezone offset parsed from responses
+    pub type LocalTimeOffset = i8;
+}
 
 impl FromCclkStr for super::unsolicited::DateTime {
     fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
@@ -107,8 +105,14 @@ impl FromCclkStr for super::unsolicited::DateTime {
         let hour = hour.parse().ok()?;
         let (minute, s) = s.split_once(':')?;
         let minute = minute.parse().ok()?;
-        let (second, s) = s.split_once(&['+', '-'])?;
+        let (second, s) = s.split_once(|c: char| !c.is_digit(10))?;
         let second = second.parse().ok()?;
+        let (tz_off, s) = s.split_once(|c| match c {
+            '+' => true,
+            '-' => true,
+            _ => c.is_digit(10)
+        })?;
+        let tz_off = tz_off.parse().unwrap_or_default();
         Some((
             Self {
                 year,
@@ -117,6 +121,7 @@ impl FromCclkStr for super::unsolicited::DateTime {
                 hour,
                 minute,
                 second,
+                tz_off,
             },
             s,
         ))
@@ -124,7 +129,7 @@ impl FromCclkStr for super::unsolicited::DateTime {
 }
 
 #[cfg(feature = "chrono")]
-impl FromCclkStr for chrono::DateTime<chrono::Utc> {
+impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
     fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
@@ -152,26 +157,26 @@ impl FromCclkStr for chrono::DateTime<chrono::Utc> {
                 !(match c {
                     '+' => true,
                     '-' => true,
-                    c => c.is_numeric(),
+                    c => c.is_digit(10),
                 })
             }) {
                 if let Ok(tzoff_quater_hours) = tzoff.parse() {
                     let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
-                    let dt = parsed.to_datetime().ok()?.to_utc();
-                    return Some((dt, remain));
+                    let dt_local = parsed.to_datetime().ok()?;
+                    return Some((dt_local, remain));
                 }
             }
         }
-        // tz parsing failed: just return the naive dt & ignore the rest of the str
-        let dt = parsed.to_datetime_with_timezone(&chrono::Utc).ok()?;
+        // tz parsing failed: just return the naive dt
+        let dt = parsed.to_datetime().ok()?;
         Some((dt, remain))
     }
 }
 
 /// Parse a yyyymmddhhmmss.sss format date-time like returned from
 /// gnss CGNSINF or UGNSINF requests. Assumed to be utc
-pub fn parse_18char_str(s: &str) -> Option<UtcDateTime> {
+pub fn parse_18char_str(s: &str) -> Option<types::UtcDateTime> {
     #[cfg(feature = "chrono")]
     {
         use chrono::format::{Fixed, Item, Numeric, Pad};
@@ -198,17 +203,13 @@ pub fn parse_18char_str(s: &str) -> Option<UtcDateTime> {
 
 /// Parse utc date-time from *PSUTTZ message data, like
 /// 'year,mo,da,hr,mn,sc,"timezone",to'
-///
-/// The last two parameters (timezone & offset) are ignored
-///  since they indicate the local timezone, so they aren't
-///  relevant when just the UTC time itself is wanted
-pub fn parse_psuttz_time(s: &str) -> Option<UtcDateTime> {
+pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::LocalTimeOffset>)> {
     #[cfg(feature = "chrono")]
     {
         //year, month, day, hour, min, sec, "time_zone", dst
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
-        chrono::format::parse(
+        let remainder = chrono::format::parse_and_remainder(
             &mut parsed,
             s,
             [
@@ -235,7 +236,9 @@ pub fn parse_psuttz_time(s: &str) -> Option<UtcDateTime> {
         )
         .ok()?;
         let _ = parsed.set_offset(0).ok()?; // PSUTTZ times are utc
-        parsed.to_datetime_with_timezone(&chrono::Utc).ok()
+        let dt = parsed.to_datetime_with_timezone(&chrono::Utc).ok()?;
+        let tz_offset = parse_timezone(remainder);
+        Some((dt, tz_offset))
     }
     #[cfg(not(feature = "chrono"))]
     {
@@ -251,20 +254,53 @@ pub fn parse_psuttz_time(s: &str) -> Option<UtcDateTime> {
         let minute = minute.parse().ok()?;
         let (second, s) = s.split_once(&',')?;
         let second = second.parse().ok()?;
-        super::unsolicited::DateTime {
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            second,
-        }
+        Some((
+            super::unsolicited::DateTime {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+            },
+            parse_timezone(s)
+        ))
+    }
+}
+
+/// Parse the quoted "timezone" argument format used by *PSUTTZ and +CTZV message data.
+/// Will also try to parse a dst value if there is any remaining arguments in the string
+pub fn parse_timezone(s: &str) -> Option<types::LocalTimeOffset> {
+    #[cfg(feature = "chrono")]
+    {
+        let (timezone, remain) = if let Some((timezone, remain)) = s.split_once(',') {
+            (timezone, remain)
+        } else {
+            (s, "")
+        };
+        let timezone = timezone.strip_circumfix('"', '"').unwrap_or(timezone);
+        let (tzoff, _) = timezone.split_once(|c: char| {
+            !(match c {
+                '+' => true,
+                '-' => true,
+                c => c.is_digit(10),
+            })
+        })?;
+        let dst: i32 = remain.parse().unwrap_or(0);
+        let dst_quater_hours = dst.checked_mul(4)?;
+        let tzoff_quater_hours: i32 = tzoff.parse().ok()?;
+        let tzoff_seconds = (15i32 * 60).checked_mul(tzoff_quater_hours.checked_add(dst_quater_hours)?)?;
+        chrono::FixedOffset::east_opt(tzoff_seconds)
+    }
+    #[cfg(not(feature = "chrono"))]
+    {
+        None
     }
 }
 
 /// Parse utc date and time arguments from +SGNSCMD message data, like
 /// 'yyyy-mm-dd,hh:mm:ss'.
-pub fn parse_sgnscmd_time(date: Option<&str>, time: &str, timestamp: &str) -> Option<UtcDateTime> {
+pub fn parse_sgnscmd_time(date: Option<&str>, time: &str, timestamp: &str) -> Option<types::UtcDateTime> {
     #[cfg(feature = "chrono")]
     {
         use chrono::format::{Item, Numeric, Pad};

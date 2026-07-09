@@ -18,6 +18,7 @@ pub struct DateTime {
     pub hour: u8,
     pub minute: u8,
     pub second: u8,
+    pub tz_off: u8,
 }
 
 impl DateTime {
@@ -36,6 +37,7 @@ impl DateTime {
             hour,
             minute,
             second,
+            tz_off: 0
         })
     }
 }

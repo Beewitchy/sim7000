@@ -243,7 +243,7 @@ pub enum GnssCommandMode {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssResult {
     pub mode: GnssCommandMode,
-    pub date_time: super::cclk::UtcDateTime,
+    pub date_time: super::cclk::types::UtcDateTime,
     pub total_satellites: Option<u32>,
     pub latitude: f32,
     pub longitude: f32,

@@ -52,7 +52,7 @@ pub struct ValidateGnssXtra;
 pub struct GnssXtraInfo {
     pub valid_diff_hours: Option<u8>,
     pub valid_duration_hours: u32,
-    pub download_time: cclk::UtcDateTime,
+    pub download_time: cclk::types::UtcDateTime,
 }
 
 impl AtRequest for GetGnssXtra {
@@ -84,6 +84,8 @@ impl AtParseLine for GnssXtraInfo {
         let valid_duration_hours = valid_duration_hours.parse().map_err(|_| "invalid data")?;
         let (download_time, _remain) =
             cclk::FromCclkStr::from_cclk_str(download_time).ok_or("missing time")?;
+        let download_time: cclk::types::LocalDateTime = download_time;
+        let download_time = download_time.to_utc();
         Ok(GnssXtraInfo {
             valid_diff_hours,
             valid_duration_hours,

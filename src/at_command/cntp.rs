@@ -51,10 +51,7 @@ pub enum SyncNtpStatusCode {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkTime {
-    #[cfg(feature = "chrono")]
-    pub time: Option<chrono::DateTime<chrono::Utc>>,
-    #[cfg(not(feature = "chrono"))]
-    pub time: Option<super::unsolicited::DateTime>,
+    pub time: Option<cclk::types::LocalDateTime>,
     pub instant: Instant,
     pub code: SyncNtpStatusCode,
 }
@@ -75,7 +72,7 @@ impl AtParseLine for NetworkTime {
         let (code, time) = match line.split_once(',') {
             Some((code, time)) => (
                 code,
-                chrono::DateTime::<chrono::Utc>::from_cclk_str(
+                cclk::types::LocalDateTime::from_cclk_str(
                     time.strip_circumfix('"', '"')
                         .ok_or("no quotes around expected time parameter")?,
                 )
