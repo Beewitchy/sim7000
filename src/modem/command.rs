@@ -447,7 +447,7 @@ impl<T: AtResponse + Clone, O: TryFrom<T>, M: RawMutex> ExpectResponse<M> for Me
         let o = <T as ExpectResponse<M>>::expect(runner)
             .await?
             .try_into()
-            .map_err(|_| Error::UnknownResponse)?;
+            .map_err(|_| Error::IncompatibleMapping)?;
         Ok(Self::new(o))
     }
 }

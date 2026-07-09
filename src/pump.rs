@@ -28,9 +28,26 @@ use crate::{
 
 pub const PUMP_COUNT: usize = 3;
 
+/// Defines work that should be done for a communication task to
+/// run the modem.
+///
+/// Each pump should be run in a loop in it's own embassy task
+/// function.
+///
+/// You can implement error handling in that function, and may
+/// also want to use signals to communicate with you main
+/// application in case the modem needs to be rebooted after an
+/// error.
 pub trait Pump {
     type Err;
 
+    /// Runs the communication logic for this pump.
+    ///
+    /// The future will an error if some unexpected behavior was
+    /// observed during communication: when this happens you can
+    /// restart the pump immediately, but may also want to power-
+    /// cycle or reboot the modem to try and get it back into a
+    /// working state.
     fn pump(&mut self) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
@@ -205,9 +222,8 @@ where
             buf.send_done();
             Ok(())
         } else {
-            // The modem likely sent us gibberish we could not understand.
-            // TODO: We might want to trigger a reboot when the modem starts acting like this.
-            log::debug!("Got unknown response: {:?}", line);
+            log::warn!("Got unknown response: {:?}", line);
+            // Present the error to user code (via the pump runner) so it can be handled there
             Err(Error::UnknownResponse)
         }
     }

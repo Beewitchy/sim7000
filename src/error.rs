@@ -12,6 +12,8 @@ pub enum Error {
     Timeout,
     Serial,
     UnknownResponse,
+    /// MetaResponse type conversion failed
+    IncompatibleMapping,
 
     Transmit,
 
@@ -43,18 +45,19 @@ impl core::error::Error for Error {}
 impl embedded_io_async::Error for Error {
     fn kind(&self) -> embedded_io_async::ErrorKind {
         match self {
-            Error::InvalidUtf8 => embedded_io_async::ErrorKind::InvalidData,
-            Error::BufferOverflow => embedded_io_async::ErrorKind::OutOfMemory,
-            Error::Sim(_) => embedded_io_async::ErrorKind::NotConnected,
-            Error::SimUnavailable => embedded_io_async::ErrorKind::NotConnected,
-            Error::Timeout => embedded_io_async::ErrorKind::TimedOut,
-            Error::Serial => embedded_io_async::ErrorKind::BrokenPipe,
-            Error::UnknownResponse => embedded_io_async::ErrorKind::Other,
-            Error::Transmit => embedded_io_async::ErrorKind::Interrupted,
-            Error::NoApn => embedded_io_async::ErrorKind::NotConnected,
-            Error::Httptofs(_) => embedded_io_async::ErrorKind::Interrupted,
-            Error::Xtra(_) => embedded_io_async::ErrorKind::Interrupted,
-            Error::InvalidContext => embedded_io_async::ErrorKind::InvalidInput,
+            Self::InvalidUtf8 => embedded_io_async::ErrorKind::InvalidData,
+            Self::BufferOverflow => embedded_io_async::ErrorKind::OutOfMemory,
+            Self::Sim(_) => embedded_io_async::ErrorKind::NotConnected,
+            Self::SimUnavailable => embedded_io_async::ErrorKind::NotConnected,
+            Self::Timeout => embedded_io_async::ErrorKind::TimedOut,
+            Self::Serial => embedded_io_async::ErrorKind::BrokenPipe,
+            Self::UnknownResponse => embedded_io_async::ErrorKind::Other,
+            Self::IncompatibleMapping => embedded_io_async::ErrorKind::Other,
+            Self::Transmit => embedded_io_async::ErrorKind::Interrupted,
+            Self::NoApn => embedded_io_async::ErrorKind::NotConnected,
+            Self::Httptofs(_) => embedded_io_async::ErrorKind::Interrupted,
+            Self::Xtra(_) => embedded_io_async::ErrorKind::Interrupted,
+            Self::InvalidContext => embedded_io_async::ErrorKind::InvalidInput,
         }
     }
 }
