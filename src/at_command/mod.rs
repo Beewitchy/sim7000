@@ -122,27 +122,23 @@ use self::{
     cgnscold::XtraStatus, cgnscpy::CopyResponse, cntp::NetworkTime, httptofs::DownloadInfo,
 };
 
-#[derive(Clone, Copy, Default, Debug)]
-pub struct AtParseErr {
-    #[allow(dead_code)]
-    message: &'static str,
+/// Results of parsing
+#[derive(Clone, Copy, Debug)]
+pub enum AtParseErr {
+    /// Parsing failed for identified data
+    Parsing(&'static str),
+    /// The parsed data may be valid but of a different response type
+    Mismatch,
+}
+
+impl Default for AtParseErr {
+    fn default() -> Self {
+        Self::Parsing("")
+    }
 }
 
 pub(crate) trait AtParseLine: Sized {
-    fn from_line(line: &str) -> Result<Self, AtParseErr>;
-    fn from_line_timestamped(line: &str, _instant: Instant) -> Result<Self, AtParseErr> {
-        Self::from_line(line)
-    }
-}
-
-impl<R> AtParseLine for Timestamped<R> where R: AtParseLine {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        R::from_line(line).map(Timestamped::new_now)
-    }
-
-    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
-        R::from_line(line).map(|response| Timestamped::new(response, instant))
-    }
+    fn from_line(line: &str, _instant: &Instant) -> Result<Self, AtParseErr>;
 }
 
 #[cfg(feature = "defmt")]
@@ -371,84 +367,83 @@ pub enum ResponseCode {
 }
 
 impl AtParseLine for ResponseCode {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
         /// Returns a function that tries to parse the line into a ResponseCode::T
         fn parse<'a, T: AtParseLine>(
             line: &'a str,
+            instant: &'a embassy_time::Instant,
             f: impl Fn(T) -> ResponseCode + 'a,
-        ) -> impl Fn(AtParseErr) -> Result<ResponseCode, AtParseErr> + 'a {
-            move |_| Ok(f(T::from_line(line)?))
+        ) -> impl Fn() -> Option<Result<ResponseCode, AtParseErr>> + 'a {
+            move || match T::from_line(line, instant) {
+                Err(AtParseErr::Mismatch) => None,
+                Err(err) => Some(Err(err)),
+                Ok(response) => Some(Ok(f(response))),
+            }
         }
 
-        Err(AtParseErr::default())
-            .or_else(parse(line, ResponseCode::Ok))
-            .or_else(parse(line, ResponseCode::Error))
-            .or_else(parse(line, ResponseCode::WritePrompt))
-            .or_else(parse(line, ResponseCode::CloseOk))
-            .or_else(parse(line, ResponseCode::IpExt))
-            .or_else(parse(line, ResponseCode::Iccid))
-            .or_else(parse(line, ResponseCode::SignalQuality))
-            .or_else(parse(line, ResponseCode::CPin))
-            .or_else(parse(line, ResponseCode::SystemInfo))
-            .or_else(parse(line, ResponseCode::OperatorInfo))
-            .or_else(parse(line, ResponseCode::FwVersion))
-            .or_else(parse(line, ResponseCode::Csub))
-            .or_else(parse(line, ResponseCode::ApRev))
-            .or_else(parse(line, ResponseCode::QualityControlNumber))
-            .or_else(parse(line, ResponseCode::ProductInfoImei))
-            .or_else(parse(line, ResponseCode::ConfigureEDRX))
-            .or_else(parse(line, ResponseCode::CNSMod))
-            .or_else(parse(line, ResponseCode::PdpContextActivation))
-            .or_else(parse(line, ResponseCode::PdpNetworkActive))
-            .or_else(parse(line, ResponseCode::NetworkApn))
-            .or_else(parse(line, ResponseCode::NetworkTime))
-            .or_else(parse(line, ResponseCode::DownloadInfo))
-            .or_else(parse(line, ResponseCode::CopyResponse))
-            .or_else(parse(line, ResponseCode::XtraStatus))
-            .or_else(parse(line, ResponseCode::XtraInfo))
-            .or_else(parse(line, ResponseCode::GnssWorkModeSet))
-            .or_else(parse(line, ResponseCode::GnssReport))
-            .or_else(parse(line, ResponseCode::CclkTime))
-            .or_else(parse(line, ResponseCode::PowerDown))
+        None
+            .or_else(parse(line, instant, ResponseCode::Ok))
+            .or_else(parse(line, instant, ResponseCode::Error))
+            .or_else(parse(line, instant, ResponseCode::WritePrompt))
+            .or_else(parse(line, instant, ResponseCode::CloseOk))
+            .or_else(parse(line, instant, ResponseCode::IpExt))
+            .or_else(parse(line, instant, ResponseCode::Iccid))
+            .or_else(parse(line, instant, ResponseCode::SignalQuality))
+            .or_else(parse(line, instant, ResponseCode::CPin))
+            .or_else(parse(line, instant, ResponseCode::SystemInfo))
+            .or_else(parse(line, instant, ResponseCode::OperatorInfo))
+            .or_else(parse(line, instant, ResponseCode::FwVersion))
+            .or_else(parse(line, instant, ResponseCode::Csub))
+            .or_else(parse(line, instant, ResponseCode::ApRev))
+            .or_else(parse(line, instant, ResponseCode::QualityControlNumber))
+            .or_else(parse(line, instant, ResponseCode::ProductInfoImei))
+            .or_else(parse(line, instant, ResponseCode::ConfigureEDRX))
+            .or_else(parse(line, instant, ResponseCode::CNSMod))
+            .or_else(parse(line, instant, ResponseCode::PdpContextActivation))
+            .or_else(parse(line, instant, ResponseCode::PdpNetworkActive))
+            .or_else(parse(line, instant, ResponseCode::NetworkApn))
+            .or_else(parse(line, instant, ResponseCode::NetworkTime))
+            .or_else(parse(line, instant, ResponseCode::DownloadInfo))
+            .or_else(parse(line, instant, ResponseCode::CopyResponse))
+            .or_else(parse(line, instant, ResponseCode::XtraStatus))
+            .or_else(parse(line, instant, ResponseCode::XtraInfo))
+            .or_else(parse(line, instant, ResponseCode::GnssWorkModeSet))
+            .or_else(parse(line, instant, ResponseCode::GnssReport))
+            .or_else(parse(line, instant, ResponseCode::CclkTime))
+            .or_else(parse(line, instant, ResponseCode::PowerDown))
             // Imei is weird and may not be unambiguously parsed.
             // Take care if trying to implement other, similar, response codes.
-            .or_else(parse(line, ResponseCode::Imei))
-            .or_else(parse(line, ResponseCode::SmsMessageFormat))
-            .or_else(parse(line, ResponseCode::MessageReference))
-            // .or_else(parse(line, ResponseCode::SmsInfo))
+            .or_else(parse(line, instant, ResponseCode::Imei))
+            .or_else(parse(line, instant, ResponseCode::SmsMessageFormat))
+            .or_else(parse(line, instant, ResponseCode::MessageReference))
+            // .or_else(parse(line, instant, ResponseCode::SmsInfo))
             // Like the Imei, this one is weird and can't be unambiguously parsed (since it is human input), with the current setup.
             // Anyways, let's have this at the bottom, that way we can catch any other
             // response codes before this one.
-            .or_else(parse(line, ResponseCode::SmsMessage))
-            .map_err(|_| "Unknown response code".into())
+            .or_else(parse(line, instant, ResponseCode::SmsMessage))
+            .unwrap_or(Err(AtParseErr::Mismatch))
     }
 }
 
 impl From<&'static str> for AtParseErr {
     fn from(message: &'static str) -> Self {
-        AtParseErr { message }
+        AtParseErr::Parsing(message)
     }
 }
 
 impl From<ParseIntError> for AtParseErr {
     fn from(_: ParseIntError) -> Self {
-        AtParseErr {
-            message: "Failed to parse integer",
-        }
+        AtParseErr::Parsing("Failed to parse integer")
     }
 }
 
 impl From<ParseFloatError> for AtParseErr {
     fn from(_: ParseFloatError) -> Self {
-        AtParseErr {
-            message: "Failed to parse float",
-        }
+        AtParseErr::Parsing("Failed to parse float")
     }
 }
 
 /// Stub AT response parser that just checks if the line starts with `prefix`
 fn stub_parser_prefix<T>(line: &str, prefix: &'static str, t: T) -> Result<T, AtParseErr> {
-    line.starts_with(prefix).then(|| t).ok_or(AtParseErr {
-        message: "Stub parser: Missing prefix",
-    })
+    line.starts_with(prefix).then(|| t).ok_or(AtParseErr::Mismatch)
 }

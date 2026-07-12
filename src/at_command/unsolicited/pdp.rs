@@ -5,9 +5,9 @@ use crate::at_command::{AtParseErr, AtParseLine};
 pub struct GprsDisconnected;
 
 impl AtParseLine for GprsDisconnected {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         line.eq("+PDP: DEACT")
             .then(|| GprsDisconnected)
-            .ok_or_else(|| "Missing '+PDP: DEACT'".into())
+            .ok_or(AtParseErr::Mismatch)
     }
 }

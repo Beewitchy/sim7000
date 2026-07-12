@@ -6,7 +6,7 @@ use crate::at_command::{stub_parser_prefix, AtParseErr, AtParseLine};
 pub struct Cds;
 
 impl AtParseLine for Cds {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         stub_parser_prefix(line, "+CDS:", Cds)
     }
 }

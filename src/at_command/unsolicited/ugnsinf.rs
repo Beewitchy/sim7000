@@ -37,7 +37,7 @@ impl DateTime {
             hour,
             minute,
             second,
-            tz_off: 0
+            tz_off: 0,
         })
     }
 }
@@ -77,15 +77,35 @@ pub struct GnssFix {
 }
 
 impl AtParseLine for GnssReport {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let rest = line
+            .strip_prefix("+UGNSINF:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
 
-        if message != "+UGNSINF" {
-            return Err("Missing +UGNSINF prefix".into());
-        }
-
-        let [run_status, fix_status, utc_datetime, latitude, longitude, msl_altitude, speed_over_groud, course_over_ground, _fix_mode, _reserved1, hdop, pdop, vdop, _reserved2, sat_gps_in_view, sat_gnss_used, sat_glonass_used, _reserved3, c_n0_max, _hpa, _vpa] =
-            collect_array(rest.split(',')).ok_or("Missing ',' separators")?;
+        let [
+            run_status,
+            fix_status,
+            utc_datetime,
+            latitude,
+            longitude,
+            msl_altitude,
+            speed_over_groud,
+            course_over_ground,
+            _fix_mode,
+            _reserved1,
+            hdop,
+            pdop,
+            vdop,
+            _reserved2,
+            sat_gps_in_view,
+            sat_gnss_used,
+            sat_glonass_used,
+            _reserved3,
+            c_n0_max,
+            _hpa,
+            _vpa,
+        ] = collect_array(rest.split(',')).ok_or("Missing ',' separators")?;
 
         if run_status != "1" {
             return Ok(GnssReport::NotEnabled);
@@ -135,7 +155,7 @@ mod test {
     #[test]
     fn test_parse() {
         let gnss_str = "+UGNSINF: 1,1,20171103022632.000,31.222067,121.354368,34.700,0.00,0.0,1,,1.1,1.4,0.9,,21,6,,,45,,";
-        let gnss = GnssReport::from_line(gnss_str).expect("Parse GnssReport");
+        let gnss = GnssReport::from_line(gnss_str, &embassy_time::Instant::now()).expect("Parse GnssReport");
 
         let expected = GnssReport::Fix(GnssFix {
             latitude: 31.222067,
@@ -150,7 +170,15 @@ mod test {
             sat_gnss_used: 6,
             sat_glonass_used: 0,
             signal_noise_ratio: 45,
-            date_time: DateTime { year: 2017, month: 11, day: 03, hour: 02, minute: 26, second: 32 }
+            date_time: DateTime {
+                year: 2017,
+                month: 11,
+                day: 03,
+                hour: 02,
+                minute: 26,
+                second: 32,
+                tz_off: 0,
+            },
         });
 
         assert_eq!(expected, gnss);
@@ -158,9 +186,8 @@ mod test {
 
     #[test]
     fn test_missing_dop() {
-        let gnss_str =
-            "+UGNSINF: 1,1,20220126140944.000,57.715185,11.973960,44.600,0.00,214.5,1,,1.4,,,,29,5,,,52,,";
-        let gnss = GnssReport::from_line(gnss_str).expect("Parse GnssReport");
+        let gnss_str = "+UGNSINF: 1,1,20220126140944.000,57.715185,11.973960,44.600,0.00,214.5,1,,1.4,,,,29,5,,,52,,";
+        let gnss = GnssReport::from_line(gnss_str, &embassy_time::Instant::now()).expect("Parse GnssReport");
 
         let expected = GnssReport::Fix(GnssFix {
             latitude: 57.715185,
@@ -175,7 +202,15 @@ mod test {
             sat_gnss_used: 5,
             sat_glonass_used: 0,
             signal_noise_ratio: 52,
-            date_time: DateTime { year: 2022, month: 01, day: 26, hour: 14, minute: 09, second: 44 }
+            date_time: DateTime {
+                year: 2022,
+                month: 01,
+                day: 26,
+                hour: 14,
+                minute: 09,
+                second: 44,
+                tz_off: 0,
+            },
         });
 
         assert_eq!(expected, gnss);

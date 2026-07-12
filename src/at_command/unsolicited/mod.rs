@@ -1,5 +1,6 @@
 //! Unsolicited Response Codes
 
+use embassy_time::Instant;
 use super::{AtParseErr, AtParseLine};
 
 mod app_pdp;
@@ -82,39 +83,44 @@ pub enum Urc {
 }
 
 impl AtParseLine for Urc {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
         /// Returns a function that tries to parse the line into a Urc::T
         fn parse<'a, T: AtParseLine>(
             line: &'a str,
+            instant: &'a embassy_time::Instant,
             f: impl Fn(T) -> Urc + 'a,
-        ) -> impl Fn(AtParseErr) -> Result<Urc, AtParseErr> + 'a {
-            move |_| Ok(f(T::from_line(line)?))
+        ) -> impl Fn() -> Option<Result<Urc, AtParseErr>> + 'a {
+            move || match T::from_line(line, instant) {
+                Err(AtParseErr::Mismatch) => None,
+                Err(err) => Some(Err(err)),
+                Ok(response) => Some(Ok(f(response))),
+            }
         }
 
-        Err(AtParseErr::default())
-            .or_else(parse(line, Urc::AppNetworkActive))
-            .or_else(parse(line, Urc::Cbm))
-            .or_else(parse(line, Urc::Cds))
-            .or_else(parse(line, Urc::CFun))
-            .or_else(parse(line, Urc::Cmt))
-            .or_else(parse(line, Urc::Cmti))
-            .or_else(parse(line, Urc::CPin))
-            .or_else(parse(line, Urc::CRing))
-            .or_else(parse(line, Urc::CUsd))
-            .or_else(parse(line, Urc::ConnectionMessage))
-            .or_else(parse(line, Urc::Ctzv))
-            .or_else(parse(line, Urc::Dst))
-            .or_else(parse(line, Urc::GnssReport))
-            .or_else(parse(line, Urc::GprsDisconnected))
-            .or_else(parse(line, Urc::Pdnwid))
-            .or_else(parse(line, Urc::PowerDown))
-            .or_else(parse(line, Urc::Psuttz))
-            .or_else(parse(line, Urc::Ready))
-            .or_else(parse(line, Urc::SmsReady))
-            .or_else(parse(line, Urc::ReceiveHeader))
-            .or_else(parse(line, Urc::NetworkRegistration))
-            .or_else(parse(line, Urc::VoltageWarning))
-            .map_err(|_| AtParseErr::from("Failed to parse as a URC"))
+        None
+            .or_else(parse(line, instant, Urc::AppNetworkActive))
+            .or_else(parse(line, instant, Urc::Cbm))
+            .or_else(parse(line, instant, Urc::Cds))
+            .or_else(parse(line, instant, Urc::CFun))
+            .or_else(parse(line, instant, Urc::Cmt))
+            .or_else(parse(line, instant, Urc::Cmti))
+            .or_else(parse(line, instant, Urc::CPin))
+            .or_else(parse(line, instant, Urc::CRing))
+            .or_else(parse(line, instant, Urc::CUsd))
+            .or_else(parse(line, instant, Urc::ConnectionMessage))
+            .or_else(parse(line, instant, Urc::Ctzv))
+            .or_else(parse(line, instant, Urc::Dst))
+            .or_else(parse(line, instant, Urc::GnssReport))
+            .or_else(parse(line, instant, Urc::GprsDisconnected))
+            .or_else(parse(line, instant, Urc::Pdnwid))
+            .or_else(parse(line, instant, Urc::PowerDown))
+            .or_else(parse(line, instant, Urc::Psuttz))
+            .or_else(parse(line, instant, Urc::Ready))
+            .or_else(parse(line, instant, Urc::SmsReady))
+            .or_else(parse(line, instant, Urc::ReceiveHeader))
+            .or_else(parse(line, instant, Urc::NetworkRegistration))
+            .or_else(parse(line, instant, Urc::VoltageWarning))
+            .unwrap_or(Err(AtParseErr::Mismatch))
     }
 }
 

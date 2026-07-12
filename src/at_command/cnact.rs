@@ -80,8 +80,8 @@ impl AtRequest for GetAppNetworkPDP {
 }
 
 impl AtParseLine for CNActPDP {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CNACT:").ok_or("missing prefix")?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let line = line.strip_prefix("+CNACT:").ok_or(AtParseErr::Mismatch)?;
         let [pdp_index, mode, address] = collect_array(line.splitn(3, ',')).ok_or("missing arguments")?;
         let pdp_index = pdp_index.trim().parse().map_err(|_| "invalid value")?;
         let mode = mode.trim().parse().map_err(|_| "invalid value")?;

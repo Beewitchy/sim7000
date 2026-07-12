@@ -57,14 +57,10 @@ pub struct NetworkTime {
 }
 
 impl AtParseLine for NetworkTime {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        Self::from_line_timestamped(line, Instant::now())
-    }
-
-    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CNTP:")
-            .ok_or("Missing '+CNTP:'")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
 
         use cclk::FromCclkStr as _;
@@ -91,7 +87,7 @@ impl AtParseLine for NetworkTime {
             _ => return Err("Unexpected response".into()),
         };
 
-        Ok(NetworkTime { time, instant, code })
+        Ok(NetworkTime { time, instant: *instant, code })
     }
 }
 

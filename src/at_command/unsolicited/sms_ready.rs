@@ -5,9 +5,9 @@ use crate::at_command::{AtParseErr, AtParseLine};
 pub struct SmsReady;
 
 impl AtParseLine for SmsReady {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         line.eq("SMS Ready")
             .then(|| SmsReady)
-            .ok_or_else(|| "Missing 'SMS Ready'".into())
+            .ok_or(AtParseErr::Mismatch)
     }
 }

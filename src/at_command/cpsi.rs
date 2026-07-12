@@ -41,12 +41,12 @@ pub struct SystemInfo {
 }
 
 impl AtParseLine for SystemInfo {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CPSI: ").ok_or("Missing '+CPSI: '")?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let line = line.strip_prefix("+CPSI:").ok_or(AtParseErr::Mismatch)?;
         let [system_mode, operation_mode, _mcc_mnc, _lac, _cell_id, _absolute_rf_ch_num, _rx_lev, _track_lo_adjust, _c1_c2] =
             collect_array(line.splitn(9, ',')).ok_or("Missing ','")?;
 
-        let system_mode = match system_mode {
+        let system_mode = match system_mode.trim() {
             "NO SERVICE" => SystemMode::NoService,
             "GSM" => SystemMode::Gsm,
             "LTE CAT-M1" => SystemMode::LteCatM1,
@@ -54,7 +54,7 @@ impl AtParseLine for SystemInfo {
             _ => return Err("Failed to parse System Mode".into()),
         };
 
-        let operation_mode = match operation_mode {
+        let operation_mode = match operation_mode.trim() {
             "Online" => OperationMode::Online,
             "Offline" => OperationMode::Offline,
             "Factory Test Mode" => OperationMode::FactoryTest,
@@ -90,7 +90,7 @@ mod test {
         ];
 
         for valid in valid_cpsis {
-            assert!(SystemInfo::from_line(valid).is_ok());
+            assert!(SystemInfo::from_line(valid, &embassy_time::Instant::now()).is_ok());
         }
     }
 }

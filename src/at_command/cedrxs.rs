@@ -99,10 +99,10 @@ impl AtRequest for GetEDRXSetting {
 }
 
 impl AtParseLine for ConfigureEDRX {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CEDRXS:")
-            .ok_or(AtParseErr::from("not an EDRX-setting response"))?;
+            .ok_or(AtParseErr::Mismatch)?;
         let mut config = Self {
             n: EDRXSetting::Disable,
             act_type: AcTType::CatM,

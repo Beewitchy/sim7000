@@ -7,7 +7,7 @@ use crate::at_command::{stub_parser_prefix, AtParseErr, AtParseLine};
 pub struct Dst;
 
 impl AtParseLine for Dst {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         stub_parser_prefix(line, "DST:", Dst)
     }
 }

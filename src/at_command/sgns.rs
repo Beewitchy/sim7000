@@ -256,10 +256,10 @@ pub struct GnssResult {
 }
 
 impl AtParseLine for GnssResult {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+SGNSCMD:")
-            .ok_or("missing prefix")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
 
         let num_parameters = line.matches(',').count();
@@ -369,10 +369,10 @@ pub enum Error {
 }
 
 impl AtParseLine for Error {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+SGNSERR:")
-            .ok_or("missing prefix")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
         let code: u8 = line.parse().map_err(|_| "invalid parameter")?;
         Ok(match code {

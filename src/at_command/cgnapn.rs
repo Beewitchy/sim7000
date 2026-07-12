@@ -28,17 +28,17 @@ impl AtRequest for GetNetworkApn {
 }
 
 impl AtParseLine for NetworkApn {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
-            .strip_prefix("+CGNAPN: ")
-            .ok_or("Missing '+CGNAPN: '")?;
+            .strip_prefix("+CGNAPN:")
+            .ok_or(AtParseErr::Mismatch)?;
 
         let (valid, apn) = line.split_once(',').ok_or("Missing ','")?;
 
-        match valid {
+        match valid.trim() {
             "0" => Ok(NetworkApn { apn: None }),
             "1" => {
-                let apn = apn.trim_matches('"');
+                let apn = apn.trim().trim_matches('"');
                 #[allow(clippy::unnecessary_fallible_conversions)] // heapless string panics on from
                 let apn = String::try_from(apn).map_err(|_| "APN too long")?;
                 Ok(NetworkApn { apn: Some(apn) })

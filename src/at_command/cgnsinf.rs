@@ -47,10 +47,7 @@ impl AtRequest for GetGnssReport {
 }
 
 impl AtParseLine for GnssReport {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        Self::from_line_timestamped(line, Instant::now())
-    }
-    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
         // <GNSS run status>,<Fix status>,<UTC date & Time>,
         // <Latitude>,<Longitude>,<MSL Altitude>,
         // <Speed Over Ground>,<Course Over Ground>,<Fix Mode>,
@@ -61,7 +58,7 @@ impl AtParseLine for GnssReport {
         // 0.00,,0,,1.4,1.7,0.9,,6,,12.4,12.0
         let line = line
             .strip_prefix("+CGNSINF:")
-            .ok_or("Missing prefix")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim_start();
         let [
             running,
@@ -100,7 +97,7 @@ impl AtParseLine for GnssReport {
                 let vpa = vpa.parse().ok();
                 let satellites_in_view = satellites_in_view.parse().unwrap_or_default();
                 Ok(Self::Fix {
-                    instant,
+                    instant: *instant,
                     nav_info: NavInfo {
                         utc,
                         latitude,

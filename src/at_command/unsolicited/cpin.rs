@@ -10,7 +10,7 @@ pub enum CPin {
 }
 
 impl AtParseLine for CPin {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         if let Some(line) = line.strip_prefix("+CPIN:") {
             let line = line.trim();
             match line {
@@ -20,7 +20,7 @@ impl AtParseLine for CPin {
                 _ => Err("unkown CPIN value".into()),
             }
         } else {
-            Err("not a cpin response".into())
+            Err(AtParseErr::Mismatch)
         }
     }
 }

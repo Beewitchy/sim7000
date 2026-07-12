@@ -42,15 +42,15 @@ impl AtRequest for GetOperatorInfo {
 }
 
 impl AtParseLine for OperatorInfo {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // +COPS: 0,0,\"Tele2 1nce.net\",7"
 
-        let line = line.strip_prefix("+COPS: ").ok_or("Missing '+COPS '")?;
+        let line = line.strip_prefix("+COPS:").ok_or(AtParseErr::Mismatch)?;
 
         let [mode, format, operator_name, _netact] =
             collect_array(line.splitn(4, ',')).ok_or("Missing ','")?;
 
-        let mode = match mode {
+        let mode = match mode.trim() {
             "0" => OperatorMode::Automatic,
             "1" => OperatorMode::Manual,
             "2" => OperatorMode::ManualDeregister,
@@ -58,7 +58,7 @@ impl AtParseLine for OperatorInfo {
             _ => return Err("Failed to parse mode".into()),
         };
 
-        let format = match format {
+        let format = match format.trim() {
             "0" => OperatorFormat::Long,
             "1" => OperatorFormat::Short,
             "2" => OperatorFormat::Numeric,

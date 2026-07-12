@@ -1,7 +1,8 @@
 use core::str::FromStr as _;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, GenericOk, ResponseCode, Seq};
-
+use super::{
+    AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, GenericOk, ResponseCode, Seq,
+};
 
 /// AT+CGACT?
 #[derive(Debug)]
@@ -32,8 +33,8 @@ impl AtRequest for CGact {
 }
 
 impl AtParseLine for CGact {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CGACT:").ok_or_else(|| AtParseErr::from("no match"))?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let line = line.strip_prefix("+CGACT:").ok_or(AtParseErr::Mismatch)?;
         let mut cgact = Self {
             cid: 0,
             state: CnactMode::Deactive,

@@ -9,10 +9,10 @@ pub struct AppNetworkActive {
 }
 
 impl AtParseLine for AppNetworkActive {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+APP PDP:")
-            .ok_or("missing prefix")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
         let (id, state) = line
             .split_once(',')

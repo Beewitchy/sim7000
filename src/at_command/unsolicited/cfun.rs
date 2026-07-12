@@ -7,8 +7,8 @@ use crate::at_command::{AtParseErr, AtParseLine};
 pub struct CFun(pub crate::at_command::cfun::Functionality);
 
 impl AtParseLine for CFun {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let line = line.strip_prefix("+CFUN:").ok_or("missing prefix")?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let line = line.strip_prefix("+CFUN:").ok_or(AtParseErr::Mismatch)?;
         Ok(Self(line.trim().parse()?))
     }
 }

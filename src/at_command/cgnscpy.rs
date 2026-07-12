@@ -31,12 +31,12 @@ impl CopyResponse {
 }
 
 impl AtParseLine for CopyResponse {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
-            .strip_prefix("+CGNSCPY: ")
-            .ok_or("Missing '+CGNSCPY: '")?;
+            .strip_prefix("+CGNSCPY:")
+            .ok_or(AtParseErr::Mismatch)?;
 
-        match line {
+        match line.trim() {
             "0" => Ok(CopyResponse::Success),
             "1" => Ok(CopyResponse::FileDoesntExist),
             _ => Err("Invalid response, expected 0 or 1".into()),
@@ -60,7 +60,7 @@ mod test {
     #[test]
     fn test_parse() {
         let str = "+CGNSCPY: 0";
-        let info = CopyResponse::from_line(str).expect("Parse CopyResponse");
+        let info = CopyResponse::from_line(str, &embassy_time::Instant::now()).expect("Parse CopyResponse");
 
         let expected = CopyResponse::Success;
         assert_eq!(expected, info);

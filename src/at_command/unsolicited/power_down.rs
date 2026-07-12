@@ -25,13 +25,13 @@ impl AtResponse for PowerDown {
 }
 
 impl AtParseLine for PowerDown {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // example: `NORMAL POWER DOWN`
-        let (reason, message) = line.split_once(' ').ok_or("Missing ' '")?;
-
-        if message != "POWER DOWN" {
-            return Err("Missing 'POWER DOWN'".into());
-        }
+        let reason = line
+            .trim_end()
+            .strip_suffix("POWER DOWN")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim_end();
 
         match reason {
             "NORMAL" => Ok(PowerDown::Normal),

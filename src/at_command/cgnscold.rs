@@ -58,12 +58,12 @@ impl AtRequest for GnssHotStart {
 }
 
 impl AtParseLine for XtraStatus {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
-            .strip_prefix("+CGNSXTRA: ")
-            .ok_or("Missing '+CGNSXTRA: '")?;
+            .strip_prefix("+CGNSXTRA:")
+            .ok_or(AtParseErr::Mismatch)?;
 
-        match line {
+        match line.trim() {
             "0" => Ok(XtraStatus::Success),
             "1" => Ok(XtraStatus::DoesntExist),
             "2" => Ok(XtraStatus::NotEffective),
@@ -88,7 +88,7 @@ mod test {
     #[test]
     fn test_parse() {
         let str = "+CGNSXTRA: 0";
-        let info = XtraStatus::from_line(str).expect("Parse XtraStatus");
+        let info = XtraStatus::from_line(str, &embassy_time::Instant::now()).expect("Parse XtraStatus");
 
         let expected = XtraStatus::Success;
         assert_eq!(expected, info);

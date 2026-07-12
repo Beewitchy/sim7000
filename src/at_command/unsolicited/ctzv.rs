@@ -7,7 +7,7 @@ use crate::at_command::{stub_parser_prefix, AtParseErr, AtParseLine};
 pub struct Ctzv;
 
 impl AtParseLine for Ctzv {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         stub_parser_prefix(line, "+CTZV:", Ctzv)
     }
 }

@@ -6,9 +6,9 @@ use crate::at_command::{AtParseErr, AtParseLine};
 pub struct Ready;
 
 impl AtParseLine for Ready {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         line.eq("RDY")
             .then(|| Ready)
-            .ok_or_else(|| "Missing 'RDY'".into())
+            .ok_or(AtParseErr::Mismatch)
     }
 }

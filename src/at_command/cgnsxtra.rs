@@ -70,20 +70,29 @@ impl AtRequest for ValidateGnssXtra {
 }
 
 impl AtParseLine for GnssXtraInfo {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // Prefix is optional
-        let line = line.strip_prefix("+CGNSXTRA:").unwrap_or(line);
+        let (line, err) = if line.starts_with("+") {
+            // If the prefix is include, any subsequent errors should be considered parsing errors
+            (
+                line.strip_prefix("+CGNSXTRA:")
+                    .ok_or(AtParseErr::Mismatch)?,
+                AtParseErr::Parsing("invalid data"),
+            )
+        } else {
+            (line, AtParseErr::Mismatch)
+        };
         let [valid_diff_hours, valid_duration_hours, download_time] =
-            collect_array(line.splitn(3, ',')).ok_or("missing arguments")?;
+            collect_array(line.splitn(3, ',')).ok_or(err)?;
         let valid_diff_hours: i16 = valid_diff_hours.parse().map_err(|_| "invalid data")?;
         let valid_diff_hours = if valid_diff_hours >= 0 {
             Some(valid_diff_hours as u8)
         } else {
             None
         };
-        let valid_duration_hours = valid_duration_hours.parse().map_err(|_| "invalid data")?;
+        let valid_duration_hours = valid_duration_hours.parse().map_err(|_| err)?;
         let (download_time, _remain) =
-            cclk::FromCclkStr::from_cclk_str(download_time).ok_or("missing time")?;
+            cclk::FromCclkStr::from_cclk_str(download_time).ok_or(err)?;
         let download_time: cclk::types::LocalDateTime = download_time;
         let download_time = download_time.to_utc();
         Ok(GnssXtraInfo {
@@ -104,10 +113,10 @@ impl AtResponse for GnssXtraInfo {
 }
 
 impl AtParseLine for ToggleXtra {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CGNSXTRA:")
-            .ok_or("Missing '+CGNSXTRA: '")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
 
         match line {

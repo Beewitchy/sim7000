@@ -13,17 +13,11 @@ use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
 use crate::{
-    BuildIo, Error, PowerState, SplitIo, StateSignal,
-    at_command::{
-        AtParseLine, ResponseCode,
-        unsolicited::{
-            GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
+    BuildIo, Error, PowerState, SplitIo, StateSignal, at_command::{
+        AtParseErr, AtParseLine, ResponseCode, cfun, unsolicited::{
+            self, GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
         },
-    },
-    at_command::{cfun, unsolicited},
-    log,
-    modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener},
-    read::ModemReader,
+    }, log, modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener}, read::ModemReader,
 };
 
 pub const PUMP_COUNT: usize = 3;
@@ -78,154 +72,167 @@ where
 
         let read_instant = read_instant.copied().unwrap_or_else(|| Instant::now());
 
-        if let Ok(message) = Urc::from_line_timestamped(&line, read_instant) {
-            // First check if it's an unsolicited message
-            log::debug!("Got URC: {:?}", line);
-            match message {
-                Urc::NetworkRegistration(registration) => {
-                    log::info!("registration status: {:?}", registration);
-                    self.registration_events.signal(registration);
-                    return Ok(());
-                }
-                Urc::ReceiveHeader(header) => {
-                    let mut length = header.length;
-                    let connection = header.connection;
-                    log::debug!("Reading {} bytes from modem", length);
-                    while length > 0 {
-                        log::debug!("remaining read: {}", length);
-                        let mut buf = Vec::<u8, 365>::new();
-                        buf.resize_default(usize::min(length, buf.capacity()))
-                            .unwrap();
-                        self.reader.read_exact(&mut buf).await?;
-                        length -= buf.len();
-                        log::debug!(
-                            "Sending {} bytes to tcp connection {}",
-                            buf.len(),
-                            connection
-                        );
-                        self.tcp.slots[connection].peek().rx.write_all(&buf).await;
-                        log::debug!("Bytes sent to tcp connection {}", connection);
-                    }
-                    log::debug!("Done sending to tcp connection {}", connection);
-                    return Ok(());
-                }
-                Urc::Cmti(message) => {
-                    if let Err(e) = self.sms_indices.try_send(message) {
-                        log::debug!("Failed to send SMS index: {:?}", e);
-                        return Err(Error::Transmit);
-                    }
-                    return Ok(());
-                }
-                Urc::ConnectionMessage(message) => {
-                    let slot = &self.tcp.slots[message.index];
-                    slot.peek().events.send(message.message);
-                    return Ok(());
-                }
-                Urc::Dst(_dst) => {
-                    log::info!("Got dst update {:?}. TODO: store local time.", _dst);
-                    return Ok(());
-                }
-                Urc::GnssReport(report) => {
-                    self.gnss.signal(report);
-                    return Ok(());
-                }
-                Urc::VoltageWarning(warning) => {
-                    self.voltage_warning.signal(warning);
-                    return Ok(());
-                }
-                Urc::PowerDown(PowerDown::UnderVoltage) => {
-                    self.ready.send(ReadyState::PowerDown);
-                    self.voltage_warning.signal(VoltageWarning::UnderVoltage);
-                    return Ok(());
-                }
-                Urc::PowerDown(PowerDown::OverVoltage) => {
-                    self.ready.send(ReadyState::PowerDown);
-                    self.voltage_warning.signal(VoltageWarning::OverVoltage);
-                    return Ok(());
-                }
-                Urc::PowerDown(PowerDown::Normal) => {
-                    // Normal power down isn't an unsolicited response but
-                    //  it's parsed here since other PowerDown messages are
-                    let mut buf =
-                        with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
-                    *buf = ResponseCode::PowerDown(PowerDown::Normal);
-                    buf.send_done();
-                    self.ready.send(ReadyState::PowerDown);
-                    return Ok(());
-                }
-                Urc::Psuttz(_ttz) => {
-                    log::info!("Got local-time update {:?}. TODO: store local time.", _ttz);
-                    return Ok(());
-                }
-                Urc::CPin(cpin) => {
-                    // This can actually be a solicited response but without a
-                    // stateful parser there's no way to know, so just assume
-                    // it is and put it in the response queue
-                    if let Some(mut buf) = self.generic_response.try_send() {
-                        *buf = ResponseCode::CPin(cpin);
-                        buf.send_done();
+        // First try to parse it as an unsolicited message
+        match Urc::from_line(&line, &read_instant) {
+            Err(AtParseErr::Parsing(_err)) => {
+                log::error!("error parsing urc: '{:?}', error: {:?}", line, _err);
+                return Err(Error::UnknownResponse);
+            }
+            Err(AtParseErr::Mismatch) => {}
+            Ok(message) => {
+                log::debug!("Got URC: {:?}", line);
+                match message {
+                    Urc::NetworkRegistration(registration) => {
+                        log::info!("registration status: {:?}", registration);
+                        self.registration_events.signal(registration);
                         return Ok(());
-                    } else {
-                        // No room to immediately return the response, but
-                        // we want to avoid locking up if the reader is
-                        // stalled so error out rather than waiting
-                        return Err(Error::BufferOverflow);
                     }
-                }
-                Urc::CFun(cfun) => {
-                    match cfun.0 {
-                        cfun::Functionality::Full => self.ready.send(ReadyState::Ready),
-                        _ => self.ready.send(ReadyState::None),
-                    }
-                    return Ok(());
-                }
-                Urc::AppNetworkActive(unsolicited::AppNetworkActive { id, active }) => {
-                    self.pdp_status.send_modify(|status| {
-                        if let Some(id) = id {
-                            let _ = status.get_or_insert_default().status.insert(id, active);
+                    Urc::ReceiveHeader(header) => {
+                        let mut length = header.length;
+                        let connection = header.connection;
+                        log::debug!("Reading {} bytes from modem", length);
+                        while length > 0 {
+                            log::debug!("remaining read: {}", length);
+                            let mut buf = Vec::<u8, 365>::new();
+                            buf.resize_default(usize::min(length, buf.capacity()))
+                                .unwrap();
+                            self.reader.read_exact(&mut buf).await?;
+                            length -= buf.len();
+                            log::debug!(
+                                "Sending {} bytes to tcp connection {}",
+                                buf.len(),
+                                connection
+                            );
+                            self.tcp.slots[connection].peek().rx.write_all(&buf).await;
+                            log::debug!("Bytes sent to tcp connection {}", connection);
                         }
-                    });
-                    return Ok(());
+                        log::debug!("Done sending to tcp connection {}", connection);
+                        return Ok(());
+                    }
+                    Urc::Cmti(message) => {
+                        if let Err(e) = self.sms_indices.try_send(message) {
+                            log::debug!("Failed to send SMS index: {:?}", e);
+                            return Err(Error::Transmit);
+                        }
+                        return Ok(());
+                    }
+                    Urc::ConnectionMessage(message) => {
+                        let slot = &self.tcp.slots[message.index];
+                        slot.peek().events.send(message.message);
+                        return Ok(());
+                    }
+                    Urc::Dst(_dst) => {
+                        log::info!("Got dst update {:?}. TODO: store local time.", _dst);
+                        return Ok(());
+                    }
+                    Urc::GnssReport(report) => {
+                        self.gnss.signal(report);
+                        return Ok(());
+                    }
+                    Urc::VoltageWarning(warning) => {
+                        self.voltage_warning.signal(warning);
+                        return Ok(());
+                    }
+                    Urc::PowerDown(PowerDown::UnderVoltage) => {
+                        self.ready.send(ReadyState::PowerDown);
+                        self.voltage_warning.signal(VoltageWarning::UnderVoltage);
+                        return Ok(());
+                    }
+                    Urc::PowerDown(PowerDown::OverVoltage) => {
+                        self.ready.send(ReadyState::PowerDown);
+                        self.voltage_warning.signal(VoltageWarning::OverVoltage);
+                        return Ok(());
+                    }
+                    Urc::PowerDown(PowerDown::Normal) => {
+                        // Normal power down isn't an unsolicited response but
+                        //  it's parsed here since other PowerDown messages are
+                        let mut buf =
+                            with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
+                        *buf = ResponseCode::PowerDown(PowerDown::Normal);
+                        buf.send_done();
+                        self.ready.send(ReadyState::PowerDown);
+                        return Ok(());
+                    }
+                    Urc::Psuttz(_ttz) => {
+                        log::info!("Got local-time update {:?}. TODO: store local time.", _ttz);
+                        return Ok(());
+                    }
+                    Urc::CPin(cpin) => {
+                        // This can actually be a solicited response but without a
+                        // stateful parser there's no way to know, so just assume
+                        // it is and put it in the response queue
+                        if let Some(mut buf) = self.generic_response.try_send() {
+                            *buf = ResponseCode::CPin(cpin);
+                            buf.send_done();
+                            return Ok(());
+                        } else {
+                            // No room to immediately return the response, but
+                            // we want to avoid locking up if the reader is
+                            // stalled so error out rather than waiting
+                            return Err(Error::BufferOverflow);
+                        }
+                    }
+                    Urc::CFun(cfun) => {
+                        match cfun.0 {
+                            cfun::Functionality::Full => self.ready.send(ReadyState::Ready),
+                            _ => self.ready.send(ReadyState::None),
+                        }
+                        return Ok(());
+                    }
+                    Urc::AppNetworkActive(unsolicited::AppNetworkActive { id, active }) => {
+                        self.pdp_status.send_modify(|status| {
+                            if let Some(id) = id {
+                                let _ = status.get_or_insert_default().status.insert(id, active);
+                            }
+                        });
+                        return Ok(());
+                    }
+                    Urc::Ready(unsolicited::Ready) => {
+                        self.ready.send(ReadyState::Ready);
+                        return Ok(());
+                    }
+                    Urc::SmsReady(unsolicited::SmsReady) => {
+                        self.ready.send(ReadyState::SmsReady);
+                        return Ok(());
+                    }
+                    _ => log::warn!("Unhandled URC: {:?}", message),
                 }
-                Urc::Ready(unsolicited::Ready) => {
-                    self.ready.send(ReadyState::Ready);
-                    return Ok(());
-                }
-                Urc::SmsReady(unsolicited::SmsReady) => {
-                    self.ready.send(ReadyState::SmsReady);
-                    return Ok(());
-                }
-                _ => log::warn!("Unhandled URC: {:?}", message),
+                return Ok(());
             }
-            Ok(())
-        } else if let Ok(mut response) = ResponseCode::from_line(&line) {
-            // If it's not a URC, try to parse it as a regular response code
-
-            // Sms messages are a bit of a special case,
-            // first comes the info and then the message on a new line
-            // and a sms message can't be unambiguously parsed seperatly
-            if let ResponseCode::SmsMessage(sms) = &mut response {
-                log::info!("Got SMS from: {:?}, reading message", sms.sender);
-                let (line, _) = self.reader.read_line().await?;
-
-                if line.is_empty() {
-                    log::warn!("received empty line from modem");
-                }
-
-                sms.message = line[..line.len()].try_into().unwrap_or_default();
-            } else {
-                log::debug!("Got generic response: {:?}", response);
-            }
-            let mut buf =
-                with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
-            *buf = response;
-            buf.send_done();
-            Ok(())
-        } else {
-            log::warn!("Got unknown response: {:?}", line);
-            // Present the error to user code (via the pump runner) so it can be handled there
-            Err(Error::UnknownResponse)
         }
+        // If it's not a URC, try to parse it as a regular response code
+        match ResponseCode::from_line(&line, &read_instant) {
+            Err(AtParseErr::Parsing(_err)) => {
+                log::error!("error parsing response: '{:?}', error: {:?}", line, _err);
+                return Err(Error::UnknownResponse);
+            }
+            Err(AtParseErr::Mismatch) => {}
+            Ok(mut response) => {
+                // Sms messages are a bit of a special case,
+                // first comes the info and then the message on a new line
+                // and a sms message can't be unambiguously parsed seperatly
+                if let ResponseCode::SmsMessage(sms) = &mut response {
+                    log::info!("Got SMS from: {:?}, reading message", sms.sender);
+                    let (line, _) = self.reader.read_line().await?;
+
+                    if line.is_empty() {
+                        log::warn!("received empty line from modem");
+                    }
+
+                    sms.message = line[..line.len()].try_into().unwrap_or_default();
+                } else {
+                    log::debug!("Got generic response: {:?}", response);
+                }
+                let mut buf =
+                    with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
+                *buf = response;
+                buf.send_done();
+                return Ok(());
+            }
+        }
+        log::warn!("Got unknown response: {:?}", line);
+        // Present the error to user code (via the pump runner) so it can be handled there
+        Err(Error::UnknownResponse)
     }
 }
 

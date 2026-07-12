@@ -24,12 +24,11 @@ pub struct SmsMessage {
 }
 
 impl AtParseLine for SmsMessage {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-
-        if message != "+CMGR" {
-            return Err("Missing +CMGR prefix".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let rest = line
+            .strip_prefix("+CMGR:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
 
         let (_status, rest) = rest.split_once(',').ok_or("Missing ','")?;
         let (sender, _) = rest.split_once(',').ok_or("Missing ','")?;
@@ -41,20 +40,6 @@ impl AtParseLine for SmsMessage {
     }
 }
 
-// impl AtParseLine for SmsMessage {
-//     fn from_line(line: &str) -> Result<Self, AtParseErr> {
-//         // This is pretty scuffed, but the way this currently works we need to filter out at commands
-//         // not all start with '+' and contain ':'
-//         if line.starts_with('+') && line.contains(':') {
-//             return Err("Invalid line".into());
-//         }
-
-//         Ok(Self {
-//             message: line.into(),
-//         })
-//     }
-// }
-
 impl AtResponse for SmsMessage {
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
@@ -63,11 +48,3 @@ impl AtResponse for SmsMessage {
         }
     }
 }
-// impl AtResponse for SmsInfo {
-//     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-//         match code {
-//             ResponseCode::SmsInfo(sms) => Ok(sms),
-//             _ => None,
-//         }
-//     }
-// }

@@ -33,12 +33,11 @@ pub enum SmsMessageFormat {
 }
 
 impl AtParseLine for SmsMessageFormat {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-
-        if message != "+CMGF" {
-            return Err("Missing +CMGF prefix".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let rest = line
+            .strip_prefix("+CMGF:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
 
         match rest {
             "0" => Ok(SmsMessageFormat::Pdu),

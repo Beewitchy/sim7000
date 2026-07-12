@@ -27,11 +27,11 @@ pub struct CloseOk {
 }
 
 impl AtParseLine for GenericOk {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // TODO: SHUT OK should be seperate type
         (line == "OK" || line == "SHUT OK")
             .then(|| GenericOk)
-            .ok_or_else(|| "Not 'OK'".into())
+            .ok_or(AtParseErr::Mismatch)
     }
 }
 
@@ -46,28 +46,28 @@ impl AtResponse for GenericOk {
 
 
 impl AtParseLine for SimError {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        if let Some(code) = line.strip_prefix("+CME ERROR: ") {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        if let Some(code) = line.strip_prefix("+CME ERROR:") {
             Ok(SimError::CmeErr {
-                code: code.parse()?,
+                code: code.trim_start().parse()?,
             })
-        } else if let Some(code) = line.strip_prefix("+CMS ERROR: ") {
+        } else if let Some(code) = line.strip_prefix("+CMS ERROR:") {
             Ok(SimError::CmsErr {
-                code: code.parse()?,
+                code: code.trim_start().parse()?,
             })
         } else if line == "ERROR" {
             Ok(SimError::Generic)
         } else {
-            Err("Not a valid error code".into())
+            Err(AtParseErr::Mismatch)
         }
     }
 }
 
 impl AtParseLine for WritePrompt {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        line.eq("> ")
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        line.starts_with(">")
             .then(|| WritePrompt)
-            .ok_or_else(|| "Not '> '".into())
+            .ok_or(AtParseErr::Mismatch)
     }
 }
 
@@ -81,10 +81,10 @@ impl AtResponse for WritePrompt {
 }
 
 impl AtParseLine for CloseOk {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let connection = line
             .strip_suffix(", CLOSE OK")
-            .ok_or("Missing ', CLOSE OK'")?
+            .ok_or(AtParseErr::Mismatch)?
             .parse()?;
 
         Ok(CloseOk { connection })

@@ -29,22 +29,16 @@ pub struct CclkTime {
 }
 
 impl AtParseLine for CclkTime {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        Self::from_line_timestamped(line, Instant::now())
-    }
-
-    fn from_line_timestamped(line: &str, instant: Instant) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CCLK:")
-            .ok_or("Missing '+CCLK:'")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim();
         let line = line
-            .strip_prefix('"')
-            .ok_or("Missing string argument")?
-            .strip_suffix('"')
+            .strip_circumfix('"', '"')
             .ok_or("Missing string argument")?;
         let (time, _) = types::LocalDateTime::from_cclk_str(line).ok_or("couldn't parse time")?;
-        Ok(CclkTime { time, instant })
+        Ok(CclkTime { time, instant: *instant })
     }
 }
 
@@ -209,48 +203,75 @@ pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::L
         //year, month, day, hour, min, sec, "time_zone", dst
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
-        let remainder = chrono::format::parse_and_remainder(
-            &mut parsed,
-            s,
-            [
-                Item::Numeric(Numeric::Year, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-                Item::Numeric(Numeric::Month, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-                Item::Numeric(Numeric::Day, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-                Item::Numeric(Numeric::Hour, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-                Item::Numeric(Numeric::Minute, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-                Item::Numeric(Numeric::Second, Pad::None),
-                Item::Literal(","),
-                Item::Space(" "),
-            ]
-            .into_iter(),
-        )
-        .ok()?;
+        let remainder = if !s.contains("/") {
+            chrono::format::parse_and_remainder(
+                &mut parsed,
+                s,
+                [
+                    Item::Numeric(Numeric::Year, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Month, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Day, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Hour, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Minute, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Second, Pad::None),
+                ]
+                .into_iter(),
+            )
+            .ok()?
+        } else {
+            chrono::format::parse_and_remainder(
+                &mut parsed,
+                s,
+                [
+                    Item::Numeric(Numeric::Year, Pad::None),
+                    Item::Literal("/"),
+                    Item::Numeric(Numeric::Month, Pad::None),
+                    Item::Literal("/"),
+                    Item::Numeric(Numeric::Day, Pad::None),
+                    Item::Literal(","),
+                    Item::Space(" "),
+                    Item::Numeric(Numeric::Hour, Pad::None),
+                    Item::Literal(":"),
+                    Item::Numeric(Numeric::Minute, Pad::None),
+                    Item::Literal(":"),
+                    Item::Numeric(Numeric::Second, Pad::None),
+                ]
+                .into_iter(),
+            )
+            .ok()?
+        };
         let _ = parsed.set_offset(0).ok()?; // PSUTTZ times are utc
         let dt = parsed.to_datetime_with_timezone(&chrono::Utc).ok()?;
-        let tz_offset = parse_timezone(remainder);
+        let (timezone_args, _remainder) = remainder.split_once(',')?;
+        let tz_offset = parse_timezone(timezone_args);
         Some((dt, tz_offset))
     }
     #[cfg(not(feature = "chrono"))]
     {
-        let (year, s) = s.split_once(',')?;
+        let (date_delim, time_delim) = if s.contains("/") {
+            ('/', ':')
+        } else {
+            (',', ',')
+        };
+        let (year, s) = s.split_once(date_delim)?;
         let year = year.parse().ok()?;
-        let (month, s) = s.split_once(',')?;
+        let (month, s) = s.split_once(date_delim)?;
         let month = month.parse().ok()?;
         let (day, s) = s.split_once(',')?;
         let day = day.parse().ok()?;
-        let (hour, s) = s.split_once(',')?;
+        let (hour, s) = s.split_once(time_delim)?;
         let hour = hour.parse().ok()?;
-        let (minute, s) = s.split_once(',')?;
+        let (minute, s) = s.split_once(time_delim)?;
         let minute = minute.parse().ok()?;
         let (second, s) = s.split_once(&',')?;
         let second = second.parse().ok()?;

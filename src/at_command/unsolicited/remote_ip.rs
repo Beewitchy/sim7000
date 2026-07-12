@@ -1,24 +1,23 @@
 use crate::at_command::{AtParseErr, AtParseLine};
-use crate::util::collect_array;
 
 /// Indicates whether the app network is active
 #[derive(Debug)]
 pub struct IncomingConnection {
-    // core::net::IpAddr doesn't exist, very sad.
-    // TODO: find out if modem supports ipv6
-    pub remote_ip: [u8; 4],
+    pub remote_ip: core::net::IpAddr,
 }
 
 impl AtParseLine for IncomingConnection {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, ip) = line.split_once(": ").ok_or("Missing ': '")?;
-        if message != "REMOTE IP" {
-            return Err("Missing 'REMOTE IP'".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let ip = line
+            .strip_prefix("REMOTE IP:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
 
-        Ok(IncomingConnection {
-            remote_ip: collect_array(ip.splitn(4, '.').filter_map(|segment| segment.parse().ok()))
-                .ok_or("Couldn't parse IP addr")?,
-        })
+        use core::str::FromStr as _;
+
+        let remote_ip =
+            core::net::IpAddr::from_str(ip).map_err(|_| "Failed to parse IP address")?;
+
+        Ok(IncomingConnection { remote_ip })
     }
 }

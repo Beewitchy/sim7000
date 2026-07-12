@@ -66,10 +66,11 @@ impl StatusCode {
 }
 
 impl AtParseLine for DownloadInfo {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
-            .strip_prefix("+HTTPTOFS: ")
-            .ok_or("Missing '+HTTPTOFS: '")?;
+            .strip_prefix("+HTTPTOFS:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
         let (status_code, data_length) = match line.split_once(',') {
             Some(t) => t,
             None => (line, "0"),
@@ -115,7 +116,7 @@ mod test {
     #[test]
     fn test_parse() {
         let str = "+HTTPTOFS: 601,0";
-        let info = DownloadInfo::from_line(str).expect("Parse DownloadInfo");
+        let info = DownloadInfo::from_line(str, &embassy_time::Instant::now()).expect("Parse DownloadInfo");
 
         let expected = DownloadInfo {
             status_code: StatusCode::NetworkError,

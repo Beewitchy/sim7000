@@ -26,13 +26,13 @@ pub enum RegistrationStatus {
 }
 
 impl AtParseLine for NetworkRegistration {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, _rest) = line.split_once(": ").ok_or("Missing ': '")?;
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let (message, _rest) = line.split_once(": ").ok_or(AtParseErr::Mismatch)?;
         match message {
             "+CREG" => CReg::parse(line),
             "+CGREG" => CGReg::parse(line),
             "+CEREG" => CEReg::parse(line),
-            _ => Err("Missing any of '+CREG', '+CGREG' or '+CEREG'".into()),
+            _ => Err(AtParseErr::Mismatch),
         }
     }
 }

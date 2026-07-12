@@ -23,15 +23,15 @@ pub struct Iccid {
 }
 
 impl AtParseLine for Iccid {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         //  "89 88 28 0666001104843 8"
         //  "89 01 26 0862291477114 f"
         if line.len() != 20 {
-            return Err("Invalid length".into());
+            return Err(AtParseErr::Mismatch);
         }
 
         if &line[..2] != "89" {
-            return Err("Invalid MII".into());
+            return Err(AtParseErr::Mismatch);
         }
 
         let country = line[2..4].parse()?;
@@ -67,7 +67,7 @@ mod test {
         let valid_iccds = ["89882806660011048438", "8901260862291477114f"];
 
         for iccid in valid_iccds {
-            assert!(Iccid::from_line(iccid).is_ok());
+            assert!(Iccid::from_line(iccid, &embassy_time::Instant::now()).is_ok());
         }
     }
 }

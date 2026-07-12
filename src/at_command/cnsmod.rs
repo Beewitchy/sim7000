@@ -46,10 +46,10 @@ impl AtRequest for SetAutoSystemMode {
 }
 
 impl AtParseLine for CNSMod {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CNSMOD:")
-            .ok_or("Missing '+CNSMOD:'")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim_start();
         let (enabled, system_mode) = line.split_once(',').ok_or("Missing delimiter")?;
 

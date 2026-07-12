@@ -50,10 +50,10 @@ impl AtRequest for GetFwVersion {
 pub struct FwVersion(pub String<MAX_VERSION_LEN>);
 
 impl AtParseLine for FwVersion {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let version = line
             .strip_prefix("Revision:")
-            .ok_or(AtParseErr::from("Line does not start with \"Revision:\""))?;
+            .ok_or(AtParseErr::Mismatch)?;
 
         String::from_str(version)
             .map(Self)
@@ -76,7 +76,7 @@ mod test {
 
     #[test]
     fn parse_version() {
-        assert!(FwVersion::from_line("Revision:1529B07SIM7000G").is_ok());
-        assert!(FwVersion::from_line("complete bogus").is_err());
+        assert!(FwVersion::from_line("Revision:1529B07SIM7000G", &embassy_time::Instant::now()).is_ok());
+        assert!(FwVersion::from_line("complete bogus", &embassy_time::Instant::now()).is_err());
     }
 }

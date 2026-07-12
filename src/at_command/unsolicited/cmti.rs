@@ -11,17 +11,14 @@ pub struct NewSmsIndex {
 }
 
 impl AtParseLine for NewSmsIndex {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-        if message != "+CMTI" {
-            return Err("Missing '+CMTI'".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let rest = line.strip_prefix("+CMTI:").ok_or(AtParseErr::Mismatch)?;
 
         let (memory, index) = rest.split_once(',').ok_or("Missing ','")?;
 
         Ok(Self {
-            memory: memory.trim_matches('\"').try_into().unwrap_or_default(),
-            index: index.parse()?,
+            memory: memory.trim().trim_matches('\"').try_into().unwrap_or_default(),
+            index: index.trim().parse()?,
         })
     }
 }

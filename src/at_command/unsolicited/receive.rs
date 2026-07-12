@@ -9,12 +9,12 @@ pub struct ReceiveHeader {
 }
 
 impl AtParseLine for ReceiveHeader {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(',').ok_or("Missing first ','")?;
-
-        if message != "+RECEIVE" {
-            return Err("Missing '+RECEIVE'".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let (_, rest) = line
+            .strip_prefix("+RECEIVE")
+            .ok_or(AtParseErr::Mismatch)?
+            .split_once(',')
+            .ok_or(AtParseErr::Mismatch)?;
 
         let (connection, length) = rest
             .trim_end_matches(':')

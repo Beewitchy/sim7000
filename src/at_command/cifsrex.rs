@@ -21,10 +21,11 @@ pub struct IpExt {
 }
 
 impl AtParseLine for IpExt {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let addr = line
-            .strip_prefix("+CIFSREX: ")
-            .ok_or("Missing '+CIFSREX: '")?;
+            .strip_prefix("+CIFSREX:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
         let addr = collect_array(addr.splitn(4, '.').filter_map(|seg| seg.parse().ok()))
             .ok_or("Failed to parse IP segment")?;
 

@@ -82,10 +82,10 @@ impl AtRequest for GetGnssWorkModeSet {
 }
 
 impl AtParseLine for Option<GnssWorkModeSet> {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line
             .strip_prefix("+CGNSMOD:")
-            .ok_or("Missing prefix")?
+            .ok_or(AtParseErr::Mismatch)?
             .trim_start();
         let [gps, glonass, beidou, galilean, qzss] =
             collect_array(line.splitn(5, ',')).ok_or("missing arguments")?;
@@ -109,8 +109,8 @@ impl AtParseLine for Option<GnssWorkModeSet> {
 }
 
 impl AtParseLine for GnssWorkModeSet {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        Option::<GnssWorkModeSet>::from_line(line).and_then(|set| set.ok_or("GPS disabled: match against Option<GnssWorkModeSet> instead to collect this result".into()))
+    fn from_line(line: &str, instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        Option::<GnssWorkModeSet>::from_line(line, instant).and_then(|set| set.ok_or("GPS disabled: match against Option<GnssWorkModeSet> instead to collect this result".into()))
     }
 }
 

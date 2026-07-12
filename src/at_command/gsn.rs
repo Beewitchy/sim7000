@@ -21,22 +21,20 @@ pub struct Imei {
 }
 
 impl AtParseLine for Imei {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         if ![15, 16].contains(&line.len()) {
-            return Err("Invalid length".into());
+            return Err(AtParseErr::Mismatch);
         }
 
-        if line.chars().any(|c| !c.is_ascii_digit()) {
-            return Err("Contains non-digit character".into());
+        if line.contains(|c: char| !c.is_ascii_digit()) {
+            return Err(AtParseErr::Mismatch);
         }
 
-        let provided_check_digit = (line.chars().next_back())
-            .expect("string is not empty")
-            .to_digit(10)
-            .expect("all chars are ascii digits");
+        let (line, provided_check_digit) = line.split_at_checked(line.len() - 1).ok_or(AtParseErr::Mismatch)?;
+        let provided_check_digit = u8::from_str_radix(provided_check_digit, 10).map_err(|_| "Missing check digit")?;
 
-        let expected_check_digit = calculate_check_digit(&line[..line.len() - 1]);
-        if (provided_check_digit as u8) != expected_check_digit {
+        let expected_check_digit = calculate_check_digit(line);
+        if provided_check_digit != expected_check_digit {
             return Err("Imei number has invalid check digit".into());
         }
 
@@ -102,7 +100,7 @@ mod test {
         ];
 
         for valid in valid_imeis {
-            let _ = Imei::from_line(valid).expect("failed to parse imei");
+            let _ = Imei::from_line(valid, &embassy_time::Instant::now()).expect("failed to parse imei");
         }
     }
 }

@@ -37,12 +37,11 @@ pub struct MessageReference {
 }
 
 impl AtParseLine for MessageReference {
-    fn from_line(line: &str) -> Result<Self, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-
-        if message != "+CMGS" {
-            return Err("Missing +CMGS prefix".into());
-        }
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        let rest = line
+            .strip_prefix("+CMGS:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim();
 
         Ok(Self {
             value: rest.parse().map_err(|_| "Invalid message reference")?,
