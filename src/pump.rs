@@ -13,11 +13,17 @@ use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
 use crate::{
-    BuildIo, Error, PowerState, SplitIo, StateSignal, at_command::{
-        AtParseErr, AtParseLine, ResponseCode, cfun, unsolicited::{
-            self, GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc, VoltageWarning,
+    BuildIo, Error, PowerState, SplitIo, StateSignal,
+    at_command::{
+        AtParseErr, AtParseLine, ResponseCode, cfun,
+        unsolicited::{
+            self, GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc,
+            VoltageWarning,
         },
-    }, log, modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener}, read::ModemReader,
+    },
+    log,
+    modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener},
+    read::ModemReader,
 };
 
 pub const PUMP_COUNT: usize = 3;
@@ -51,6 +57,7 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) tcp: &'context TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
+    pub(crate) local_time: watch::Sender<'context, M, unsolicited::Psuttz, 1>,
     pub(crate) ready: watch::Sender<'context, M, ReadyState, 1>,
     pub(crate) registration_events: &'context StateSignal<M, NetworkRegistration>,
     pub(crate) sms_indices: Sender<'context, M, unsolicited::NewSmsIndex, 5>,
@@ -121,8 +128,17 @@ where
                         slot.peek().events.send(message.message);
                         return Ok(());
                     }
-                    Urc::Dst(_dst) => {
-                        log::info!("Got dst update {:?}. TODO: store local time.", _dst);
+                    Urc::Dst(dst) => {
+                        log::info!("Got dst update {:?}.", dst);
+                        self.local_time.send_modify(move |local_time| {
+                            if let Some(current) = local_time {
+                                if let Some(tz_offset) = current.tz_offset {
+                                    current.tz_offset =  Some(crate::at_command::cclk::types::set_dst(
+                                        tz_offset, dst,
+                                    ));
+                                }
+                            }
+                        });
                         return Ok(());
                     }
                     Urc::GnssReport(report) => {
@@ -147,14 +163,16 @@ where
                         // Normal power down isn't an unsolicited response but
                         //  it's parsed here since other PowerDown messages are
                         let mut buf =
-                            with_timeout(Duration::from_secs(10), self.generic_response.send()).await?;
+                            with_timeout(Duration::from_secs(10), self.generic_response.send())
+                                .await?;
                         *buf = ResponseCode::PowerDown(PowerDown::Normal);
                         buf.send_done();
                         self.ready.send(ReadyState::PowerDown);
                         return Ok(());
                     }
-                    Urc::Psuttz(_ttz) => {
-                        log::info!("Got local-time update {:?}. TODO: store local time.", _ttz);
+                    Urc::Psuttz(ttz) => {
+                        log::info!("Got local-time update {:?}.", ttz);
+                        self.local_time.send(ttz);
                         return Ok(());
                     }
                     Urc::CPin(cpin) => {
@@ -203,7 +221,7 @@ where
         // If it's not a URC, try to parse it as a regular response code
         match ResponseCode::from_line(&line, &read_instant) {
             Err(AtParseErr::Parsing(_err)) => {
-                log::error!("error parsing response: '{:?}', error: {:?}", line, _err);
+                log::error!("error parsing response: {:?}, error: {:?}", line, _err);
                 return Err(Error::UnknownResponse);
             }
             Err(AtParseErr::Mismatch) => {}

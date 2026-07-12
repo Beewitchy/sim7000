@@ -1,5 +1,5 @@
-use heapless::String;
 use embassy_time::Instant;
+use heapless::String;
 
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
 
@@ -68,11 +68,13 @@ impl AtParseLine for NetworkTime {
         let (code, time) = match line.split_once(',') {
             Some((code, time)) => (
                 code,
-                cclk::types::LocalDateTime::from_cclk_str(
-                    time.strip_circumfix('"', '"')
-                        .ok_or("no quotes around expected time parameter")?,
-                )
-                .map(|(date, _)| date),
+                Some(
+                    cclk::types::LocalDateTime::from_cclk_str(
+                        time.strip_circumfix('"', '"')
+                            .ok_or("no quotes around expected time parameter")?,
+                    )
+                    .map(|(date, _)| date)?,
+                ),
             ),
             None => (line, None),
         };
@@ -87,7 +89,11 @@ impl AtParseLine for NetworkTime {
             _ => return Err("Unexpected response".into()),
         };
 
-        Ok(NetworkTime { time, instant: *instant, code })
+        Ok(NetworkTime {
+            time,
+            instant: *instant,
+            code,
+        })
     }
 }
 

@@ -179,6 +179,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             tcp: &context.shared.tcp,
             gnss: context.shared.gnss_slot.peek(),
             voltage_warning: context.shared.voltage_slot.peek(),
+            local_time: context.shared.local_time.sender(),
             ready: context.shared.ready.sender(),
             sms_indices: context.shared.sms_indices.sender(),
             pdp_status: context.shared.pdp_status.sender(),

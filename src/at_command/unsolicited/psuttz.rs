@@ -1,6 +1,6 @@
 use crate::at_command::{AtParseErr, AtParseLine, cclk};
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Psuttz {
     pub utc_time: cclk::types::UtcDateTime,
@@ -13,9 +13,8 @@ impl AtParseLine for Psuttz {
             .strip_prefix("*PSUTTZ:")
             .ok_or(AtParseErr::Mismatch)?
             .trim();
-        // I have seen *PSUTTZ responses in cclk format so that is handled too as a fallback
         let (utc_time, tz_offset) =
-            cclk::parse_psuttz_time(line).ok_or("couldn't parse datetime arguments")?;
+            cclk::parse_psuttz_time(line)?;
         Ok(Self {
             utc_time,
             tz_offset,

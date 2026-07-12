@@ -10,7 +10,7 @@ use crate::{
         ResponseCode,
         unsolicited::{
             ConnectionMessage, GnssReport, NetworkRegistration, NewSmsIndex, RegistrationStatus,
-            VoltageWarning,
+            VoltageWarning, Psuttz
         },
     },
     drop::DropChannel,
@@ -64,6 +64,7 @@ pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) sms_state: Signal<M, SmsState>,
     pub(crate) ready: Watch<M, ReadyState, 1>,
     pub(crate) pdp_status: Watch<M, AppNetworkMap, 1>,
+    pub(crate) local_time: Watch<M, Psuttz, 1>,
     pub(crate) registration_events: StateSignal<M, NetworkRegistration>,
     pub(crate) tcp: TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
@@ -89,6 +90,7 @@ where
             sms_state: Signal::new(),
             ready: Watch::new_with(ReadyState::None),
             pdp_status: Watch::new(),
+            local_time: Watch::new(),
             registration_events: StateSignal::new(NetworkRegistration {
                 status: RegistrationStatus::Unknown,
                 lac: None,

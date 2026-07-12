@@ -72,35 +72,38 @@ impl AtRequest for ValidateGnssXtra {
 impl AtParseLine for GnssXtraInfo {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // Prefix is optional
-        let (line, err) = if line.starts_with("+") {
-            // If the prefix is include, any subsequent errors should be considered parsing errors
-            (
-                line.strip_prefix("+CGNSXTRA:")
-                    .ok_or(AtParseErr::Mismatch)?,
-                AtParseErr::Parsing("invalid data"),
-            )
+        if line.starts_with("+") {
+            let line = line
+                .strip_prefix("+CGNSXTRA:")
+                .ok_or(AtParseErr::Mismatch)?;
+            parse_arguments(line)
         } else {
-            (line, AtParseErr::Mismatch)
-        };
-        let [valid_diff_hours, valid_duration_hours, download_time] =
-            collect_array(line.splitn(3, ',')).ok_or(err)?;
-        let valid_diff_hours: i16 = valid_diff_hours.parse().map_err(|_| "invalid data")?;
-        let valid_diff_hours = if valid_diff_hours >= 0 {
-            Some(valid_diff_hours as u8)
-        } else {
-            None
-        };
-        let valid_duration_hours = valid_duration_hours.parse().map_err(|_| err)?;
-        let (download_time, _remain) =
-            cclk::FromCclkStr::from_cclk_str(download_time).ok_or(err)?;
-        let download_time: cclk::types::LocalDateTime = download_time;
-        let download_time = download_time.to_utc();
-        Ok(GnssXtraInfo {
-            valid_diff_hours,
-            valid_duration_hours,
-            download_time,
-        })
+            // If the prefix is not included any errors should only be considered mismatches
+            parse_arguments(line).map_err(|_| AtParseErr::Mismatch)
+        }
     }
+}
+
+fn parse_arguments(line: &str) -> Result<GnssXtraInfo, AtParseErr> {
+    let [valid_diff_hours, valid_duration_hours, download_time] =
+        collect_array(line.splitn(3, ',')).ok_or("missing arguments")?;
+    let valid_diff_hours: i16 = valid_diff_hours.parse().map_err(|_| "invalid character")?;
+    let valid_diff_hours = if valid_diff_hours >= 0 {
+        Some(valid_diff_hours as u8)
+    } else {
+        None
+    };
+    let valid_duration_hours = valid_duration_hours
+        .parse()
+        .map_err(|_| "invalid character")?;
+    let (download_time, _remain) = cclk::FromCclkStr::from_cclk_str(download_time)?;
+    let download_time: cclk::types::LocalDateTime = download_time;
+    let download_time = download_time.to_utc();
+    Ok(GnssXtraInfo {
+        valid_diff_hours,
+        valid_duration_hours,
+        download_time,
+    })
 }
 
 impl AtResponse for GnssXtraInfo {

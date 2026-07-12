@@ -37,8 +37,11 @@ impl AtParseLine for CclkTime {
         let line = line
             .strip_circumfix('"', '"')
             .ok_or("Missing string argument")?;
-        let (time, _) = types::LocalDateTime::from_cclk_str(line).ok_or("couldn't parse time")?;
-        Ok(CclkTime { time, instant: *instant })
+        let (time, _) = types::LocalDateTime::from_cclk_str(line)?;
+        Ok(CclkTime {
+            time,
+            instant: *instant,
+        })
     }
 }
 
@@ -57,7 +60,7 @@ impl AtResponse for CclkTime {
 pub trait FromCclkStr: core::fmt::Debug + defmt::Format + Sized {
     /// Try to parse a cclk time from the given string
     /// Should return the paresed result & the remaining unparsed string
-    fn from_cclk_str(s: &str) -> Option<(Self, &str)>;
+    fn from_cclk_str(s: &str) -> Result<(Self, &str), AtParseErr>;
 }
 /// Parse a 80/01/06,00:37:28+00 type local date-time
 /// (as returned from CCLK)
@@ -65,7 +68,7 @@ pub trait FromCclkStr: core::fmt::Debug + defmt::Format + Sized {
 pub trait FromCclkStr: core::fmt::Debug + Sized {
     /// Try to parse a cclk time from the given string
     /// Should return the paresed result & the remaining unparsed string
-    fn from_cclk_str(s: &str) -> Option<(Self, &str)>;
+    fn from_cclk_str(s: &str) -> Result<(Self, &str), AtParseErr>;
 }
 
 #[cfg(feature = "chrono")]
@@ -75,39 +78,51 @@ pub mod types {
     /// Common type alias for local tz times parsed from responses
     pub type LocalDateTime = chrono::DateTime<chrono::FixedOffset>;
     /// Common type alias for timezone offset parsed from responses
-    pub type LocalTimeOffset = chrono::FixedOffset;
+    pub type LocalTimeOffset = (chrono::FixedOffset, u8);
+
+    pub fn set_dst(tz_offset: LocalTimeOffset, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
+        (tz_offset.0, dst.dst_quater_hours)
+    }
 }
 #[cfg(not(feature = "chrono"))]
 pub mod types {
     /// Common type alias for UTC times parsed from responses
-    pub type UtcDateTime = super::unsolicited::DateTime;
+    pub type UtcDateTime = super::super::unsolicited::DateTime;
     /// Common type alias for local tz times parsed from responses
-    pub type LocalDateTime = super::unsolicited::DateTime;
+    pub type LocalDateTime = super::super::unsolicited::DateTime;
     /// Common type alias for timezone offset parsed from responses
-    pub type LocalTimeOffset = i8;
+    pub type LocalTimeOffset = (i8, u8);
+
+    pub fn set_dst(tz_offset: LocalTimeOffset, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
+        (tz_offset.0, dst.dst_quater_hours)
+    }
 }
 
 impl FromCclkStr for super::unsolicited::DateTime {
-    fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
-        let (year, s) = s.split_once('/')?;
-        let year = year.parse().ok()?;
-        let (month, s) = s.split_once('/')?;
-        let month = month.parse().ok()?;
-        let (day, s) = s.split_once(',')?;
-        let day = day.parse().ok()?;
-        let (hour, s) = s.split_once(':')?;
-        let hour = hour.parse().ok()?;
-        let (minute, s) = s.split_once(':')?;
-        let minute = minute.parse().ok()?;
-        let (second, s) = s.split_once(|c: char| !c.is_digit(10))?;
-        let second = second.parse().ok()?;
-        let (tz_off, s) = s.split_once(|c| match c {
-            '+' => true,
-            '-' => true,
-            _ => c.is_digit(10)
-        })?;
+    fn from_cclk_str(s: &str) -> Result<(Self, &str), AtParseErr> {
+        let (year, s) = s.split_once('/').ok_or("Missing delimiter")?;
+        let year = year.parse().map_err(|_| "Invalid character")?;
+        let (month, s) = s.split_once('/').ok_or("Missing delimiter")?;
+        let month = month.parse().map_err(|_| "Invalid character")?;
+        let (day, s) = s.split_once(',').ok_or("Missing delimiter")?;
+        let day = day.parse().map_err(|_| "Invalid character")?;
+        let (hour, s) = s.split_once(':').ok_or("Missing delimiter")?;
+        let hour = hour.parse().map_err(|_| "Invalid character")?;
+        let (minute, s) = s.split_once(':').ok_or("Missing delimiter")?;
+        let minute = minute.parse().map_err(|_| "Invalid character")?;
+        let (second, s) = s
+            .split_once(|c: char| !c.is_digit(10))
+            .ok_or("Missing seconds field")?;
+        let second = second.parse().map_err(|_| "Invalid character")?;
+        let (tz_off, s) = s
+            .split_once(|c| match c {
+                '+' => true,
+                '-' => true,
+                _ => c.is_digit(10),
+            })
+            .ok_or("Missing timezone field")?;
         let tz_off = tz_off.parse().unwrap_or_default();
-        Some((
+        Ok((
             Self {
                 year,
                 month,
@@ -123,8 +138,25 @@ impl FromCclkStr for super::unsolicited::DateTime {
 }
 
 #[cfg(feature = "chrono")]
+fn map_chrono_err(err: chrono::format::ParseError) -> AtParseErr {
+    match err.kind() {
+        chrono::format::ParseErrorKind::OutOfRange => "A date or time field is out of range",
+        chrono::format::ParseErrorKind::Impossible => {
+            "Date and time fields represent an impossible date"
+        }
+        chrono::format::ParseErrorKind::NotEnough => "Not enough data to parse a date",
+        chrono::format::ParseErrorKind::Invalid => "Invalid characters",
+        chrono::format::ParseErrorKind::TooShort => "Too few fields",
+        chrono::format::ParseErrorKind::TooLong => "Too many fields",
+        chrono::format::ParseErrorKind::BadFormat => "Bad date format",
+        _ => "Unknown error while parsing date",
+    }
+    .into()
+}
+
+#[cfg(feature = "chrono")]
 impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
-    fn from_cclk_str(s: &str) -> Option<(Self, &str)> {
+    fn from_cclk_str(s: &str) -> Result<(Self, &str), AtParseErr> {
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
         let remain = chrono::format::parse_and_remainder(
@@ -145,7 +177,7 @@ impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
             ]
             .into_iter(),
         )
-        .ok()?;
+        .map_err(map_chrono_err)?;
         if remain.starts_with(&['+', '-']) {
             if let Some((tzoff, remain)) = remain.split_once(|c: char| {
                 !(match c {
@@ -157,14 +189,15 @@ impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
                 if let Ok(tzoff_quater_hours) = tzoff.parse() {
                     let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
-                    let dt_local = parsed.to_datetime().ok()?;
-                    return Some((dt_local, remain));
+                    let dt_local = parsed.to_datetime().map_err(map_chrono_err)?;
+                    return Ok((dt_local, remain));
                 }
             }
         }
         // tz parsing failed: just return the naive dt
-        let dt = parsed.to_datetime().ok()?;
-        Some((dt, remain))
+        let _ = parsed.set_offset(0);
+        let dt = parsed.to_datetime().map_err(map_chrono_err)?;
+        Ok((dt, remain))
     }
 }
 
@@ -197,7 +230,9 @@ pub fn parse_18char_str(s: &str) -> Option<types::UtcDateTime> {
 
 /// Parse utc date-time from *PSUTTZ message data, like
 /// 'year,mo,da,hr,mn,sc,"timezone",to'
-pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::LocalTimeOffset>)> {
+pub fn parse_psuttz_time(
+    s: &str,
+) -> Result<(types::UtcDateTime, Option<types::LocalTimeOffset>), AtParseErr> {
     #[cfg(feature = "chrono")]
     {
         //year, month, day, hour, min, sec, "time_zone", dst
@@ -227,8 +262,11 @@ pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::L
                 ]
                 .into_iter(),
             )
-            .ok()?
+            .map_err(map_chrono_err)?
         } else {
+            // Psuttz on my modem seems to output with this format.
+            // It also and includes a weird extra " character at the end
+            // of the time argument, but that doesn't affect this parsing
             chrono::format::parse_and_remainder(
                 &mut parsed,
                 s,
@@ -248,13 +286,15 @@ pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::L
                 ]
                 .into_iter(),
             )
-            .ok()?
+            .map_err(map_chrono_err)?
         };
-        let _ = parsed.set_offset(0).ok()?; // PSUTTZ times are utc
-        let dt = parsed.to_datetime_with_timezone(&chrono::Utc).ok()?;
-        let (timezone_args, _remainder) = remainder.split_once(',')?;
+        let _ = parsed.set_offset(0).map_err(map_chrono_err)?; // PSUTTZ times are utc
+        let dt = parsed
+            .to_datetime_with_timezone(&chrono::Utc)
+            .map_err(map_chrono_err)?;
+        let (timezone_args, _remainder) = remainder.split_once(',').ok_or("Missing delimiter")?;
         let tz_offset = parse_timezone(timezone_args);
-        Some((dt, tz_offset))
+        Ok((dt, tz_offset))
     }
     #[cfg(not(feature = "chrono"))]
     {
@@ -264,18 +304,18 @@ pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::L
             (',', ',')
         };
         let (year, s) = s.split_once(date_delim)?;
-        let year = year.parse().ok()?;
+        let year = year.parse().map_err(|_| "Invalid character")?;
         let (month, s) = s.split_once(date_delim)?;
-        let month = month.parse().ok()?;
+        let month = month.parse().map_err(|_| "Invalid character")?;
         let (day, s) = s.split_once(',')?;
-        let day = day.parse().ok()?;
+        let day = day.parse().map_err(|_| "Invalid character")?;
         let (hour, s) = s.split_once(time_delim)?;
-        let hour = hour.parse().ok()?;
+        let hour = hour.parse().map_err(|_| "Invalid character")?;
         let (minute, s) = s.split_once(time_delim)?;
-        let minute = minute.parse().ok()?;
+        let minute = minute.parse().map_err(|_| "Invalid character")?;
         let (second, s) = s.split_once(&',')?;
-        let second = second.parse().ok()?;
-        Some((
+        let second = second.parse().map_err(|_| "Invalid character")?;
+        Ok((
             super::unsolicited::DateTime {
                 year,
                 month,
@@ -284,7 +324,7 @@ pub fn parse_psuttz_time(s: &str) -> Option<(types::UtcDateTime, Option<types::L
                 minute,
                 second,
             },
-            parse_timezone(s)
+            parse_timezone(s),
         ))
     }
 }
@@ -310,8 +350,9 @@ pub fn parse_timezone(s: &str) -> Option<types::LocalTimeOffset> {
         let dst: i32 = remain.parse().unwrap_or(0);
         let dst_quater_hours = dst.checked_mul(4)?;
         let tzoff_quater_hours: i32 = tzoff.parse().ok()?;
-        let tzoff_seconds = (15i32 * 60).checked_mul(tzoff_quater_hours.checked_add(dst_quater_hours)?)?;
-        chrono::FixedOffset::east_opt(tzoff_seconds)
+        let tzoff_seconds =
+            (15i32 * 60).checked_mul(tzoff_quater_hours.checked_add(dst_quater_hours)?)?;
+        chrono::FixedOffset::east_opt(tzoff_seconds).map(|tz_off| (tz_off, dst_quater_hours as u8))
     }
     #[cfg(not(feature = "chrono"))]
     {
@@ -321,7 +362,11 @@ pub fn parse_timezone(s: &str) -> Option<types::LocalTimeOffset> {
 
 /// Parse utc date and time arguments from +SGNSCMD message data, like
 /// 'yyyy-mm-dd,hh:mm:ss'.
-pub fn parse_sgnscmd_time(date: Option<&str>, time: &str, timestamp: &str) -> Option<types::UtcDateTime> {
+pub fn parse_sgnscmd_time(
+    date: Option<&str>,
+    time: &str,
+    timestamp: &str,
+) -> Option<types::UtcDateTime> {
     #[cfg(feature = "chrono")]
     {
         use chrono::format::{Item, Numeric, Pad};
