@@ -129,15 +129,12 @@ where
                         return Ok(());
                     }
                     Urc::Dst(dst) => {
-                        log::info!("Got dst update {:?}.", dst);
+                        log::debug!("Got dst update {:?}.", dst);
                         self.local_time.send_modify(move |local_time| {
-                            if let Some(current) = local_time {
-                                if let Some(tz_offset) = current.tz_offset {
-                                    current.tz_offset =  Some(crate::at_command::cclk::types::set_dst(
-                                        tz_offset, dst,
-                                    ));
-                                }
-                            }
+                            let current = local_time.get_or_insert_default();
+                            current.tz_offset = Some(crate::at_command::cclk::types::set_dst(
+                                current.tz_offset, dst,
+                            ));
                         });
                         return Ok(());
                     }
@@ -171,7 +168,7 @@ where
                         return Ok(());
                     }
                     Urc::Psuttz(ttz) => {
-                        log::info!("Got local-time update {:?}.", ttz);
+                        log::debug!("Got local-time update {:?}.", ttz);
                         self.local_time.send(ttz);
                         return Ok(());
                     }

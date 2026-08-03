@@ -80,8 +80,10 @@ pub mod types {
     /// Common type alias for timezone offset parsed from responses
     pub type LocalTimeOffset = (chrono::FixedOffset, u8);
 
-    pub fn set_dst(tz_offset: LocalTimeOffset, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
-        (tz_offset.0, dst.dst_quater_hours)
+    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset = (chrono::FixedOffset::east_opt(0).unwrap(), 0);
+
+    pub fn set_dst(tz_offset: Option<LocalTimeOffset>, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
+        (tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0, dst.dst_quater_hours)
     }
 }
 #[cfg(not(feature = "chrono"))]
@@ -93,8 +95,11 @@ pub mod types {
     /// Common type alias for timezone offset parsed from responses
     pub type LocalTimeOffset = (i8, u8);
 
-    pub fn set_dst(tz_offset: LocalTimeOffset, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
-        (tz_offset.0, dst.dst_quater_hours)
+    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset = (0, 0);
+
+
+    pub fn set_dst(tz_offset: Option<LocalTimeOffset>, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
+        (tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0, dst.dst_quater_hours)
     }
 }
 

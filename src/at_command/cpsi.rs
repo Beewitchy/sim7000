@@ -43,8 +43,11 @@ pub struct SystemInfo {
 impl AtParseLine for SystemInfo {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let line = line.strip_prefix("+CPSI:").ok_or(AtParseErr::Mismatch)?;
-        let [system_mode, operation_mode, _mcc_mnc, _lac, _cell_id, _absolute_rf_ch_num, _rx_lev, _track_lo_adjust, _c1_c2] =
-            collect_array(line.splitn(9, ',')).ok_or("Missing ','")?;
+        let (system_mode, rest) =
+            line.split_once(',').ok_or("Missing ','")?;
+
+        let [operation_mode, _mcc_mnc, _lac, _cell_id, _absolute_rf_ch_num, _rx_lev, _track_lo_adjust, _c1_c2] =
+            collect_array(rest.splitn(8, ',')).unwrap_or_else(|| [rest, "", "", "", "", "", "", ""]);
 
         let system_mode = match system_mode.trim() {
             "NO SERVICE" => SystemMode::NoService,

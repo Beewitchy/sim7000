@@ -955,12 +955,47 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(network_time)
     }
 
-    pub async fn query_local_time(&mut self) -> Result<cclk::types::LocalDateTime, Error> {
+    /// Query the current local time
+    ///
+    /// This provides a time with timezone & dst offset applied
+    pub async fn query_local_time(&self) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
         self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime::new())
             .await
-            .map(|(utc, _)| utc.time)
+            .map(|(cclk_time, _)| (cclk_time.time, cclk_time.instant))
     }
 
+    /// Enable timestamp status notifications from the cell network.
+    ///
+    /// Call [Self::local_timestamp] to retrieve the current status.
+    pub async fn enable_local_timestamp(&self) -> Result<(), Error> {
+        let _ = self.run_command_with_timeout(
+                Some(Duration::from_secs(30)),
+                cntp::EnableLocalTimestamp(true),
+            )
+            .await?;
+        Ok(())
+    }
+    /// Return the current utc time status with separate timezone & dst information
+    pub fn local_timestamp(&self) -> Option<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>)> {
+        self.context.local_time.try_get().map(|psuttz| (psuttz.utc_time, psuttz.tz_offset))
+    }
+
+    /// Try to get the current local timestamp status from the
+    /// cell network.
+    ///
+    /// Equivilent to calling [Self::enable_local_timestamp] and then
+    /// [Self::local_timestamp] until a result is retrieved.
+    ///
+    /// Will return [Error::InvalidContext] if the local time status
+    /// is already being waited on.
+    pub async fn get_local_timestamp(&mut self) -> Result<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>), Error> {
+        let mut receiver = self.context.local_time.receiver().ok_or(Error::InvalidContext)?;
+        self.enable_local_timestamp().await?;
+        let psuttz = receiver.get().await;
+        Ok((psuttz.utc_time, psuttz.tz_offset))
+    }
+
+    /// Attempt to dwnload the latest gnss assist file
     pub async fn download_xtra(
         &mut self,
         urls: impl IntoIterator<Item = &str>,
@@ -1099,7 +1134,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let cold_start;
         #[cfg(feature = "chrono")]
         if let Some(last_known_fix) = last_known_fix {
-            cold_start = if let Some(now) = now {
+            cold_start = if let Some((now, _offset_instant)) = now {
                 let age = now.signed_duration_since(last_known_fix);
                 if age < chrono::Duration::seconds(2) {
                     GnssStateRelevancy::Hot
