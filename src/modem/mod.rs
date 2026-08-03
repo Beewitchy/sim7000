@@ -976,8 +976,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(())
     }
     /// Return the current utc time status with separate timezone & dst information
-    pub fn local_timestamp(&self) -> Option<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>)> {
-        self.context.local_time.try_get().map(|psuttz| (psuttz.utc_time, psuttz.tz_offset))
+    pub fn local_timestamp(&self) -> Option<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>, embassy_time::Instant)> {
+        self.context.local_time.try_get().map(|psuttz| (psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
     }
 
     /// Try to get the current local timestamp status from the
@@ -988,11 +988,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Will return [Error::InvalidContext] if the local time status
     /// is already being waited on.
-    pub async fn get_local_timestamp(&mut self) -> Result<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>), Error> {
+    pub async fn get_local_timestamp(&mut self) -> Result<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>, embassy_time::Instant), Error> {
         let mut receiver = self.context.local_time.receiver().ok_or(Error::InvalidContext)?;
         self.enable_local_timestamp().await?;
         let psuttz = receiver.get().await;
-        Ok((psuttz.utc_time, psuttz.tz_offset))
+        Ok((psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
     }
 
     /// Attempt to dwnload the latest gnss assist file
