@@ -81,6 +81,16 @@ impl<M: RawMutex, T: Clone> StateSignal<M, T> {
     }
 }
 
+impl<M: RawMutex, T: Clone> StateSignal<M, T> where T: Default {
+    /// Clear the current value without signalling
+    pub fn clear(&self) {
+        self.inner.lock(|s| {
+            let mut s = s.borrow_mut();
+            s.item = T::default();
+        })
+    }
+}
+
 /// A fixed-capacity channel, backed by a ringbuffer.
 ///
 /// This channel drops old messages if you try to send something while the channel is full.

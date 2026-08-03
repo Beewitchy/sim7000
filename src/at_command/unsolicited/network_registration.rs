@@ -2,7 +2,7 @@ use crate::at_command::{AtParseErr, AtParseLine};
 
 use super::{cereg::CEReg, cgreg::CGReg, creg::CReg};
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkRegistration {
     pub status: RegistrationStatus,
@@ -14,13 +14,14 @@ pub struct NetworkRegistration {
     pub ci: Option<u32>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RegistrationStatus {
     NotRegistered,
     RegisteredHome,
     Searching,
     RegistrationDenied,
+    #[default]
     Unknown,
     RegisteredRoaming,
 }

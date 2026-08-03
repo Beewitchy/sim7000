@@ -139,7 +139,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         );
         let modem = Modem {
             commands,
-            active_signal: context.shared.active_signal.publisher(),
+            active_signal: context.shared.active_signal.broadcaster(),
             context: &context.shared,
             power,
             apn: None,
@@ -169,7 +169,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             rx: &context.shared.rx_pipe,
             tx: &context.shared.tx_pipe,
             power_state: PowerState::Off,
-            active_signal: context.shared.active_signal.subscribe(),
+            active_signal: context.shared.active_signal.listener(),
         };
 
         let rx_pump = RxPump {
@@ -183,6 +183,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             ready: context.shared.ready.sender(),
             sms_indices: context.shared.sms_indices.sender(),
             pdp_status: context.shared.pdp_status.sender(),
+            active_signal: context.shared.active_signal.listener(),
         };
 
         let tx_pump = TxPump {
@@ -672,7 +673,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         if drop_channel.is_empty() {
             return Ok(());
         }
-        let mut active_signal = self.context.active_signal.subscribe();
+        let mut active_signal = self.context.active_signal.listener();
         let mut current_power_state = self.power.state();
         while !drop_channel.is_empty() {
             select_biased! {
@@ -890,7 +891,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(Some(Gnss::new(
             reports,
             &self.commands,
-            self.context.active_signal.subscribe(),
+            self.context.active_signal.listener(),
             &self.context.drop_channel,
             Duration::from_secs(20),
         )))

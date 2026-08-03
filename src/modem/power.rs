@@ -1,14 +1,14 @@
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    pubsub::{DynImmediatePublisher, PubSubBehavior, PubSubChannel, Subscriber},
+    watch::{Watch, Receiver, AnonReceiver, DynSender},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerState {
     On,
-    Off,
     Sleeping,
+    Off,
 }
 
 pub const POWER_SIGNAL_LISTENERS: usize = 12;
@@ -17,52 +17,65 @@ pub const POWER_SIGNAL_LISTENERS: usize = 12;
 ///
 /// Make sure that POWER_SIGNAL_LISTENERS is high enough to accomodate your needs.
 pub struct PowerSignal<M: RawMutex> {
-    channel: PubSubChannel<M, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
+    channel: Watch<M, PowerState, POWER_SIGNAL_LISTENERS>,
 }
 
 pub struct PowerSignalBroadcaster<'a> {
-    notifyer: DynImmediatePublisher<'a, PowerState>,
-    last: PowerState,
+    sender: DynSender<'a, PowerState>,
 }
 
 pub struct PowerSignalListener<'a, M: RawMutex> {
-    listener: Subscriber<'a, M, PowerState, 2, POWER_SIGNAL_LISTENERS, 0>,
+    receiver: Receiver<'a, M, PowerState, POWER_SIGNAL_LISTENERS>,
+}
+
+pub struct PowerSignalReader<'a, M: RawMutex> {
+    receiver: AnonReceiver<'a, M, PowerState, POWER_SIGNAL_LISTENERS>,
 }
 
 impl<M: RawMutex> PowerSignal<M> {
     pub const fn new() -> Self {
         Self {
-            channel: PubSubChannel::new(),
+            channel: Watch::new(),
         }
     }
 
-    pub fn subscribe(&self) -> PowerSignalListener<'_, M> {
+    pub fn listener(&self) -> PowerSignalListener<'_, M> {
         PowerSignalListener {
-            listener: self
+            receiver: self
                 .channel
-                .subscriber()
-                .expect("not enough PowerSignal subscribers"),
+                .receiver()
+                .expect("not enough PowerSignal listener slots"),
         }
     }
 
-    pub fn publisher(&self) -> PowerSignalBroadcaster<'_> {
+    pub fn reader(&self) -> PowerSignalReader<'_, M> {
+        PowerSignalReader {
+            receiver: self
+                .channel
+                .anon_receiver()
+        }
+    }
+
+    pub fn broadcaster(&self) -> PowerSignalBroadcaster<'_> {
         PowerSignalBroadcaster {
-            last: PowerState::Off,
-            notifyer: self.channel.dyn_immediate_publisher(),
+            sender: self.channel.dyn_sender(),
         }
     }
 
     pub fn update(&self, new_state: PowerState) {
-        self.channel.publish_immediate(new_state);
+        self.channel.sender().send(new_state);
     }
 }
 
 impl PowerSignalBroadcaster<'_> {
     pub fn broadcast(&mut self, new_state: PowerState) {
-        if self.last != new_state {
-            self.last = new_state;
-            self.notifyer.publish_immediate(new_state);
-        }
+        self.sender.send_if_modified(|state| {
+            let modified = if let Some(state) = state {
+                *state != new_state
+            } else { true };
+            *state = Some(new_state);
+            modified
+        })
     }
 }
 
@@ -81,6 +94,20 @@ impl<M: RawMutex> PowerSignalListener<'_, M> {
     }
 
     pub async fn listen(&mut self) -> PowerState {
-        self.listener.next_message_pure().await
+        self.receiver.changed().await
+    }
+
+    pub fn try_read_current(&mut self) -> Option<PowerState> {
+        self.receiver.try_get()
+    }
+}
+
+impl<M: RawMutex> PowerSignalReader<'_, M> {
+    pub fn try_read_current(&mut self) -> Option<PowerState> {
+        self.receiver.try_get()
+    }
+
+    pub fn try_read_changed(&mut self) -> Option<PowerState> {
+        self.receiver.try_changed()
     }
 }

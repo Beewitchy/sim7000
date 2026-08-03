@@ -1,5 +1,5 @@
 use core::{future::Future, str::from_utf8};
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
     channel::Sender,
@@ -22,7 +22,10 @@ use crate::{
         },
     },
     log,
-    modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener},
+    modem::{
+        AppNetworkMap, RawAtCommand, ReadyState, TcpContext,
+        power::{PowerSignalListener},
+    },
     read::ModemReader,
 };
 
@@ -62,6 +65,18 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) registration_events: &'context StateSignal<M, NetworkRegistration>,
     pub(crate) sms_indices: Sender<'context, M, unsolicited::NewSmsIndex, 5>,
     pub(crate) pdp_status: watch::Sender<'context, M, AppNetworkMap, 1>,
+    pub(crate) active_signal: PowerSignalListener<'context, M>,
+}
+
+impl<'context, M: RawMutex, const TCP_SLOTS: usize> RxPump<'context, M, TCP_SLOTS> {
+    /// Reset status that is no longer valid after power down
+    pub fn clear_online_status(&mut self) {
+        self.local_time.clear();
+        self.ready.clear();
+        self.registration_events.clear();
+        self.sms_indices.clear();
+        self.pdp_status.clear();
+    }
 }
 
 impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS>
@@ -71,7 +86,24 @@ where
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
-        let (line, read_instant) = self.reader.read_line().await?;
+        // Execute read_line then check power signal, in that order:
+        //  read_line will return immediately if there is already
+        //  data available, so the power signal will only be handled
+        //  when reading is complete for the currently available data,
+        //  making sure all packets are handled before resetting
+        //  the Rx state.
+        let (line, read_instant) = match select(
+            self.reader.read_line(),
+            self.active_signal.wait_for(PowerState::Off),
+        )
+        .await
+        {
+            Either::First(line) => line?,
+            Either::Second(()) => {
+                self.clear_online_status();
+                return Ok(());
+            }
+        };
 
         if line.is_empty() {
             log::warn!("received empty line from modem");
@@ -133,7 +165,8 @@ where
                         self.local_time.send_modify(move |local_time| {
                             let current = local_time.get_or_insert_default();
                             current.tz_offset = Some(crate::at_command::cclk::types::set_dst(
-                                current.tz_offset, dst,
+                                current.tz_offset,
+                                dst,
                             ));
                         });
                         return Ok(());
@@ -325,12 +358,10 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
                     }
 
                     self.rx.write_all(&rx_buf[..bytes]).await;
-                    // TODO: this flush is probably not needed
-                    self.rx.flush().await.ok(/* infallible */);
                 }
                 Either3::Third(result) => {
                     self.power_state = result;
-                    if self.power_state != PowerState::On {
+                    if self.power_state == PowerState::Off {
                         break Ok(());
                     }
                 }
