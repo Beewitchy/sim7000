@@ -960,7 +960,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// This provides a time with timezone & dst offset applied
     pub async fn query_local_time(&self) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
-        self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime::new())
+        self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime)
             .await
             .map(|(cclk_time, _)| (cclk_time.time, cclk_time.instant))
     }
@@ -992,6 +992,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn get_local_timestamp(&mut self) -> Result<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>, embassy_time::Instant), Error> {
         let mut receiver = self.context.local_time.receiver().ok_or(Error::InvalidContext)?;
         self.enable_local_timestamp().await?;
+        // Prompt the modem to query the time--result ignored
+        //  because we just want the PSUTTZ value:
+        let _ = self.query_local_time().await;
         let psuttz = receiver.get().await;
         Ok((psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
     }

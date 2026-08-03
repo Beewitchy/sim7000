@@ -70,12 +70,16 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
 
 impl<'context, M: RawMutex, const TCP_SLOTS: usize> RxPump<'context, M, TCP_SLOTS> {
     /// Reset status that is no longer valid after power down
-    pub fn clear_online_status(&mut self) {
-        self.local_time.clear();
-        self.ready.clear();
-        self.registration_events.clear();
-        self.sms_indices.clear();
-        self.pdp_status.clear();
+    pub fn clear_online_status(&mut self, new_state: PowerState) {
+        if matches!(new_state, PowerState::Sleeping | PowerState::Off) {
+            self.sms_indices.clear();
+            self.pdp_status.clear();
+        }
+        if new_state == PowerState::Off {
+            self.local_time.clear();
+            self.ready.clear();
+            self.registration_events.clear();
+        }
     }
 }
 
@@ -94,13 +98,13 @@ where
         //  the Rx state.
         let (line, read_instant) = match select(
             self.reader.read_line(),
-            self.active_signal.wait_for(PowerState::Off),
+            self.active_signal.wait_for_not(PowerState::On),
         )
         .await
         {
             Either::First(line) => line?,
-            Either::Second(()) => {
-                self.clear_online_status();
+            Either::Second(new_state) => {
+                self.clear_online_status(new_state);
                 return Ok(());
             }
         };
