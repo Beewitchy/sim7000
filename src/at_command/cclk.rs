@@ -298,8 +298,8 @@ pub fn parse_psuttz_time(
             .to_datetime_with_timezone(&chrono::Utc)
             .map_err(map_chrono_err)?;
         let (timezone_args, _remainder) = remainder.split_once(',').ok_or("Missing delimiter")?;
-        let tz_offset = parse_timezone(timezone_args);
-        Ok((dt, tz_offset))
+        let tz_offset = parse_timezone(timezone_args)?;
+        Ok((dt, Some(tz_offset)))
     }
     #[cfg(not(feature = "chrono"))]
     {
@@ -336,7 +336,7 @@ pub fn parse_psuttz_time(
 
 /// Parse the quoted "timezone" argument format used by *PSUTTZ and +CTZV message data.
 /// Will also try to parse a dst value if there is any remaining arguments in the string
-pub fn parse_timezone(s: &str) -> Option<types::LocalTimeOffset> {
+pub fn parse_timezone(s: &str) -> Result<types::LocalTimeOffset, AtParseErr> {
     #[cfg(feature = "chrono")]
     {
         let (timezone, remain) = if let Some((timezone, remain)) = s.split_once(',') {
@@ -351,13 +351,13 @@ pub fn parse_timezone(s: &str) -> Option<types::LocalTimeOffset> {
                 '-' => true,
                 c => c.is_digit(10),
             })
-        })?;
+        }).ok_or("Missing TZ digits")?;
         let dst: i32 = remain.parse().unwrap_or(0);
-        let dst_quater_hours = dst.checked_mul(4)?;
-        let tzoff_quater_hours: i32 = tzoff.parse().ok()?;
+        let dst_quater_hours = dst.checked_mul(4).ok_or("DST offset is too large")?;
+        let tzoff_quater_hours: i32 = tzoff.parse()?;
         let tzoff_seconds =
-            (15i32 * 60).checked_mul(tzoff_quater_hours.checked_add(dst_quater_hours)?)?;
-        chrono::FixedOffset::east_opt(tzoff_seconds).map(|tz_off| (tz_off, dst_quater_hours as u8))
+            (15i32 * 60).checked_mul(tzoff_quater_hours.checked_sub(dst_quater_hours).ok_or("DST offset is larger than TZ offset")?).ok_or("TZ offset is too large")?;
+        chrono::FixedOffset::east_opt(tzoff_seconds).map(|tz_off| (tz_off, dst_quater_hours as u8)).ok_or("TZ offset is invalid".into())
     }
     #[cfg(not(feature = "chrono"))]
     {
