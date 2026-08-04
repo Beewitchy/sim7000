@@ -80,10 +80,17 @@ pub mod types {
     /// Common type alias for timezone offset parsed from responses
     pub type LocalTimeOffset = (chrono::FixedOffset, u8);
 
-    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset = (chrono::FixedOffset::east_opt(0).unwrap(), 0);
+    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset =
+        (chrono::FixedOffset::east_opt(0).unwrap(), 0);
 
-    pub fn set_dst(tz_offset: Option<LocalTimeOffset>, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
-        (tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0, dst.dst_quater_hours)
+    pub fn set_dst(
+        tz_offset: Option<LocalTimeOffset>,
+        dst: super::super::unsolicited::Dst,
+    ) -> LocalTimeOffset {
+        (
+            tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0,
+            dst.dst_quater_hours,
+        )
     }
 }
 #[cfg(not(feature = "chrono"))]
@@ -97,9 +104,14 @@ pub mod types {
 
     const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset = (0, 0);
 
-
-    pub fn set_dst(tz_offset: Option<LocalTimeOffset>, dst: super::super::unsolicited::Dst) -> LocalTimeOffset {
-        (tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0, dst.dst_quater_hours)
+    pub fn set_dst(
+        tz_offset: Option<LocalTimeOffset>,
+        dst: super::super::unsolicited::Dst,
+    ) -> LocalTimeOffset {
+        (
+            tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0,
+            dst.dst_quater_hours,
+        )
     }
 }
 
@@ -119,13 +131,7 @@ impl FromCclkStr for super::unsolicited::DateTime {
             .split_once(|c: char| !c.is_digit(10))
             .ok_or("Missing seconds field")?;
         let second = second.parse().map_err(|_| "Invalid character")?;
-        let (tz_off, s) = s
-            .split_once(|c| match c {
-                '+' => true,
-                '-' => true,
-                _ => c.is_digit(10),
-            })
-            .ok_or("Missing timezone field")?;
+        let (tz_off, s) = s.split_at_checked(3).ok_or("Missing timezone field")?;
         let tz_off = i8::from_str_radix(tz_off, 10).unwrap_or_default();
         Ok((
             Self {
@@ -184,13 +190,7 @@ impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
         )
         .map_err(map_chrono_err)?;
         if remain.starts_with(&['+', '-']) {
-            if let Some((tzoff, remain)) = remain.split_once(|c: char| {
-                !(match c {
-                    '+' => true,
-                    '-' => true,
-                    c => c.is_digit(10),
-                })
-            }) {
+            if let Some((tzoff, remain)) = remain.split_at_checked(3) {
                 if let Ok(tzoff_quater_hours) = i64::from_str_radix(tzoff, 10) {
                     let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
@@ -297,7 +297,7 @@ pub fn parse_psuttz_time(
         let dt = parsed
             .to_datetime_with_timezone(&chrono::Utc)
             .map_err(map_chrono_err)?;
-        let (timezone_args, _remainder) = remainder.split_once(',').ok_or("Missing delimiter")?;
+        let (_, timezone_args) = remainder.split_once(',').ok_or("Missing delimiter")?;
         let tz_offset = parse_timezone(timezone_args)?;
         Ok((dt, Some(tz_offset)))
     }
@@ -344,20 +344,21 @@ pub fn parse_timezone(s: &str) -> Result<types::LocalTimeOffset, AtParseErr> {
         } else {
             (s, "")
         };
+        crate::log::debug!("Got timezone {:?}.", timezone);
         let timezone = timezone.strip_circumfix('"', '"').unwrap_or(timezone);
-        let (tzoff, _) = timezone.split_once(|c: char| {
-            !(match c {
-                '+' => true,
-                '-' => true,
-                c => c.is_digit(10),
-            })
-        }).ok_or("Missing TZ digits")?;
         let dst = i32::from_str_radix(remain, 10).unwrap_or(0);
         let dst_quater_hours = dst.checked_mul(4).ok_or("DST offset is too large")?;
-        let tzoff_quater_hours = i32::from_str_radix(tzoff, 10)?;
-        let tzoff_seconds =
-            (15i32 * 60).checked_mul(tzoff_quater_hours.checked_sub(dst_quater_hours).ok_or("DST offset is larger than TZ offset")?).ok_or("TZ offset is too large")?;
-        chrono::FixedOffset::east_opt(tzoff_seconds).map(|tz_off| (tz_off, dst_quater_hours as u8)).ok_or("TZ offset is invalid".into())
+        let tzoff_quater_hours = i32::from_str_radix(timezone, 10)?;
+        let tzoff_seconds = (15i32 * 60)
+            .checked_mul(
+                tzoff_quater_hours
+                    .checked_sub(dst_quater_hours)
+                    .ok_or("DST offset is larger than TZ offset")?,
+            )
+            .ok_or("TZ offset is too large")?;
+        chrono::FixedOffset::east_opt(tzoff_seconds)
+            .map(|tz_off| (tz_off, dst_quater_hours as u8))
+            .ok_or("TZ offset is invalid".into())
     }
     #[cfg(not(feature = "chrono"))]
     {
