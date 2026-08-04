@@ -65,6 +65,10 @@ impl<M: RawMutex> PowerSignal<M> {
     pub fn update(&self, new_state: PowerState) {
         self.channel.sender().send(new_state);
     }
+
+    pub fn clear(&self) {
+        self.channel.sender().clear()
+    }
 }
 
 impl PowerSignalBroadcaster<'_> {
@@ -76,6 +80,10 @@ impl PowerSignalBroadcaster<'_> {
             *state = Some(new_state);
             modified
         })
+    }
+
+    pub fn clear(&self) {
+        self.sender.clear()
     }
 }
 

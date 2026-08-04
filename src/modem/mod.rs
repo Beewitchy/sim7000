@@ -199,6 +199,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
+        self.active_signal.clear();
         if matches!(self.power.state(), PowerState::Off) {
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
@@ -1256,6 +1257,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn wake(&mut self) {
         self.power.wake().await;
+        self.active_signal.clear();
         self.active_signal.broadcast(PowerState::On);
     }
 }
