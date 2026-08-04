@@ -126,7 +126,7 @@ impl FromCclkStr for super::unsolicited::DateTime {
                 _ => c.is_digit(10),
             })
             .ok_or("Missing timezone field")?;
-        let tz_off = tz_off.parse().unwrap_or_default();
+        let tz_off = i8::from_str_radix(tz_off, 10).unwrap_or_default();
         Ok((
             Self {
                 year,
@@ -191,7 +191,7 @@ impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
                     c => c.is_digit(10),
                 })
             }) {
-                if let Ok(tzoff_quater_hours) = tzoff.parse() {
+                if let Ok(tzoff_quater_hours) = i64::from_str_radix(tzoff, 10) {
                     let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
                     let dt_local = parsed.to_datetime().map_err(map_chrono_err)?;
@@ -352,9 +352,9 @@ pub fn parse_timezone(s: &str) -> Result<types::LocalTimeOffset, AtParseErr> {
                 c => c.is_digit(10),
             })
         }).ok_or("Missing TZ digits")?;
-        let dst: i32 = remain.parse().unwrap_or(0);
+        let dst = i32::from_str_radix(remain, 10).unwrap_or(0);
         let dst_quater_hours = dst.checked_mul(4).ok_or("DST offset is too large")?;
-        let tzoff_quater_hours: i32 = tzoff.parse()?;
+        let tzoff_quater_hours = i32::from_str_radix(tzoff, 10)?;
         let tzoff_seconds =
             (15i32 * 60).checked_mul(tzoff_quater_hours.checked_sub(dst_quater_hours).ok_or("DST offset is larger than TZ offset")?).ok_or("TZ offset is too large")?;
         chrono::FixedOffset::east_opt(tzoff_seconds).map(|tz_off| (tz_off, dst_quater_hours as u8)).ok_or("TZ offset is invalid".into())
@@ -408,7 +408,7 @@ pub fn parse_sgnscmd_time(
         let timestamp_millis = if let Some(timestamp) = timestamp.strip_prefix("0x") {
             i64::from_str_radix(timestamp, 16).ok()?
         } else {
-            timestamp.parse().ok()?
+            i64::from_str_radix(timestamp, 10).ok()?
         };
         let timestamp = timestamp_millis / 1000;
         let nanosecond = (timestamp_millis % 1000) * 1_000_000;
