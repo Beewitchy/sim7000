@@ -27,6 +27,7 @@ use crate::{
         ipr::{self, BaudRate},
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
     },
+    drop::{AsyncDrop, DropMessage},
     gnss::Gnss,
     log,
     pump::{RawIoPump, RxPump, TxPump},
@@ -818,12 +819,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ) -> Result<Option<Gnss<'_, 'm, M>>, Error> {
         self.async_drop().await?;
 
+        let mut commands = self.commands.lock().await;
+
         let Some(reports) = self.context.gnss_slot.claim() else {
             return Ok(None);
         };
-
-        let mut commands = self.commands.lock().await;
-
+        let drop_token = AsyncDrop::new(&self.context.drop_channel, DropMessage::Gnss);
         commands.run(cgnspwr::SetGnssPower(true)).await?;
 
         let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
@@ -888,6 +889,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             // Failed to configure
             return Err(Error::InvalidContext);
         }
+
+        core::mem::forget(drop_token);
 
         Ok(Some(Gnss::new(
             reports,
@@ -960,7 +963,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     /// Query the current local time
     ///
     /// This provides a time with timezone & dst offset applied
-    pub async fn query_local_time(&self) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
+    pub async fn query_local_time(
+        &self,
+    ) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
         self.run_command_with_timeout(Some(Duration::from_secs(60)), cclk::GetTime)
             .await
             .map(|(cclk_time, _)| (cclk_time.time, cclk_time.instant))
@@ -970,7 +975,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Call [Self::local_timestamp] to retrieve the current status.
     pub async fn enable_local_timestamp(&self) -> Result<(), Error> {
-        let _ = self.run_command_with_timeout(
+        let _ = self
+            .run_command_with_timeout(
                 Some(Duration::from_secs(30)),
                 cntp::EnableLocalTimestamp(true),
             )
@@ -978,8 +984,17 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         Ok(())
     }
     /// Return the current utc time status with separate timezone & dst information
-    pub fn local_timestamp(&self) -> Option<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>, embassy_time::Instant)> {
-        self.context.local_time.try_get().map(|psuttz| (psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
+    pub fn local_timestamp(
+        &self,
+    ) -> Option<(
+        cclk::types::UtcDateTime,
+        Option<cclk::types::LocalTimeOffset>,
+        embassy_time::Instant,
+    )> {
+        self.context
+            .local_time
+            .try_get()
+            .map(|psuttz| (psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
     }
 
     /// Attempt to dwnload the latest gnss assist file
