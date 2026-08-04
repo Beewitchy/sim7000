@@ -982,24 +982,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         self.context.local_time.try_get().map(|psuttz| (psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
     }
 
-    /// Try to get the current local timestamp status from the
-    /// cell network.
-    ///
-    /// Equivilent to calling [Self::enable_local_timestamp] and then
-    /// [Self::local_timestamp] until a result is retrieved.
-    ///
-    /// Will return [Error::InvalidContext] if the local time status
-    /// is already being waited on.
-    pub async fn get_local_timestamp(&mut self) -> Result<(cclk::types::UtcDateTime, Option<cclk::types::LocalTimeOffset>, embassy_time::Instant), Error> {
-        let mut receiver = self.context.local_time.receiver().ok_or(Error::InvalidContext)?;
-        self.enable_local_timestamp().await?;
-        // Prompt the modem to query the time--result ignored
-        //  because we just want the PSUTTZ value:
-        let _ = self.query_local_time().await;
-        let psuttz = receiver.get().await;
-        Ok((psuttz.utc_time, psuttz.tz_offset, psuttz.instant))
-    }
-
     /// Attempt to dwnload the latest gnss assist file
     pub async fn download_xtra(
         &mut self,
