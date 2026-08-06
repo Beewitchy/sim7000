@@ -1,6 +1,9 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{
+    AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode,
+    plmn,
+};
 
 /// AT+CPSI?
 #[derive(Debug)]
@@ -26,8 +29,8 @@ pub enum SystemMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GsmModeParameters {
-    pub mcc: u16,
-    pub mnc: u16,
+    pub mcc: plmn::Mcc,
+    pub mnc: plmn::Mnc,
     pub lac: u16,
     pub cell_id: u16,
     pub absolute_rf_ch_num: u16,
@@ -40,8 +43,8 @@ pub struct GsmModeParameters {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LteModeParameters {
-    pub mcc: u16,
-    pub mnc: u16,
+    pub mcc: plmn::Mcc,
+    pub mnc: plmn::Mnc,
     pub tac: u16,
     pub serving_cell_id: u16,
     pub phys_cell_id: u16,
@@ -150,8 +153,8 @@ impl AtParseLine for SystemInfo {
                 let (c1, c2) = c1_c2
                     .split_once('-')
                     .ok_or("Missing '-' in c1-c2 parameter")?;
-                let mcc = mcc.parse().map_err(|_| "Failed to parse mcc parameter")?;
-                let mnc = mnc.parse().map_err(|_| "Failed to parse mnc parameter")?;
+                let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
+                let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
                 SystemInfo {
                     operation_mode: OperationMode::from_str(operation_mode)?,
                     system_mode_parameters: SystemModeParameters::Gsm(GsmModeParameters {
@@ -186,8 +189,8 @@ impl AtParseLine for SystemInfo {
                 let (mcc, mnc) = mcc_mnc
                     .split_once('-')
                     .ok_or("Missing '-' in mcc-mnc parameter")?;
-                let mcc = mcc.parse().map_err(|_| "Failed to parse mcc parameter")?;
-                let mnc = mnc.parse().map_err(|_| "Failed to parse mnc parameter")?;
+                let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
+                let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
                 let lte_mode_parameters = LteModeParameters {
                     mcc,
                     mnc,

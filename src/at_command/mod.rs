@@ -5,6 +5,7 @@ use embassy_time::Instant;
 
 pub mod generic_response;
 pub mod unsolicited;
+pub mod plmn;
 
 use cmgr::SmsMessage;
 pub use generic_response::{CloseOk, GenericOk, SimError, WritePrompt};
