@@ -338,6 +338,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         self.apn = apn;
     }
 
+    pub fn apn(&self) -> Option<&heapless::String<63>> {
+        self.apn.as_ref()
+    }
+
     pub fn set_ap_username(&mut self, ap_username: &'static str) {
         self.ap_username = ap_username;
     }
