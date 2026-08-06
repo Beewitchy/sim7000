@@ -13,12 +13,11 @@ impl CReg {
             .ok_or(AtParseErr::Mismatch)?
             .trim_start();
 
-        let len = 1 + rest.chars().filter(|&c| c == ',').count();
-
+        let num_params = 1 + rest.matches(',').count();
         let mut fields = rest.split(',');
 
         // skip the <n> field if it exists
-        match len {
+        match num_params {
             // URC variant
             // <stat>[,<lac>,<ci>,<netact>]
             1 | 4 => {}

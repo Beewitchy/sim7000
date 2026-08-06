@@ -428,9 +428,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         } else {
             for _ in 0..self.reg_retries + 1 {
                 let _ = commands.run(cgreg::GetRegistrationStatus).await;
-                match self.wait_for_registration().await {
+                match self.wait_for_registration(None).await {
                     Ok(_) => break,
-                    _ => {}
+                    Err(_) => {}
                 }
                 embassy_time::Timer::after_secs(2).await;
             }
@@ -539,12 +539,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
                 log::info!("Trying {:?}...", mode);
                 let _ = commands.run(cgreg::GetRegistrationStatus).await;
-                match with_timeout(self.auto_reg_timeout, self.wait_for_registration()).await {
-                    Ok(Ok(_)) => {
+                match self.wait_for_registration(Some(self.auto_reg_timeout)).await {
+                    Ok(_) => {
                         log::info!("Registered using {:?}", mode);
                         return Ok(*mode);
                     }
-                    _ => {}
+                    Err(_) => {}
                 }
 
                 log::debug!("Retry {}...", retry);
@@ -636,10 +636,13 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     /// Wait until the modem has registered to a cell tower.
-    pub async fn wait_for_registration(&self) -> Result<(), Error> {
+    pub async fn wait_for_registration(&self, timeout: Option<embassy_time::Duration>) -> Result<NetworkRegistration, Error> {
         log::debug!("waiting for cell registration");
-        let wait_for_registration = async move {
-            self.context
+        let timeout = timeout.unwrap_or(Duration::from_secs(10 * 60));
+        const LONG_REG_DURATION: Duration = Duration::from_secs(20);
+        let long_timeout = timeout > LONG_REG_DURATION;
+        let waiter = async move {
+            let wait_for_status = self.context
                 .registration_events
                 .compare_wait(|r| {
                     [
@@ -647,25 +650,36 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                         RegistrationStatus::RegisteredRoaming,
                     ]
                     .contains(&r.status)
-                })
-                .await;
-        };
-
-        let warn_on_long_wait = async {
-            for i in 1.. {
-                Timer::after(Duration::from_secs(20)).await;
-                log::warn!(
-                    "modem registration seems to be taking a long time ({}s)...",
-                    i * 20
-                );
+                });
+            if long_timeout {
+                match embassy_futures::select::select(
+                    wait_for_status,
+                    async {
+                        loop {
+                            for i in 1.. {
+                                Timer::after(LONG_REG_DURATION).await;
+                                log::warn!(
+                                    "modem registration seems to be taking a long time ({}s)...",
+                                    i * LONG_REG_DURATION.as_secs()
+                                );
+                            }
+                        }
+                    }
+                ).await {
+                    embassy_futures::select::Either::First(network_registration) => network_registration
+                }
+            } else {
+                wait_for_status.await
             }
         };
-
         select_biased! {
-            _ = wait_for_registration.fuse() => Ok(()),
-            _ = warn_on_long_wait.fuse() => unreachable!(),
-            _ = Timer::after(Duration::from_secs(10 * 60)).fuse() => Err(Error::Timeout),
+            network_registration = waiter.fuse() => Ok(network_registration),
+            _ = Timer::after(timeout).fuse() => Err(Error::Timeout),
         }
+    }
+
+    pub fn network_registration(&self) -> NetworkRegistration {
+        self.context.registration_events.current()
     }
 
     /// Execute queued drop commands

@@ -1,4 +1,4 @@
-use super::{network_registration::RegistrationStatus, NetworkRegistration};
+use super::{NetworkRegistration, network_registration::RegistrationStatus};
 use crate::at_command::AtParseErr;
 
 /// Network registration status
@@ -8,13 +8,12 @@ pub struct CEReg;
 
 impl CEReg {
     pub(crate) fn parse(line: &str) -> Result<NetworkRegistration, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-        if message != "+CEREG" {
-            return Err("Missing '+CEREG'".into());
-        }
+        let rest = line
+            .strip_prefix("+CEREG:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim_start();
 
-        let len = 1 + rest.chars().filter(|&c| c == ',').count();
-
+        let num_params = 1 + rest.matches(',').count();
         let mut fields = rest.split(',');
 
         // Warning: Horror show below.
@@ -24,7 +23,7 @@ impl CEReg {
         // <n>,<stat>[,[<tac>],[<rac>],[<ci>],[<AcT>][,,[,[<Active-Time>],[<Periodic-TAU>]]]]
         // depending on whether it's a URC or not.
         // but those grammars are horseshit, and can't be trusted. So i'm taking the easy path and ignoring everthing but the <stat> field
-        let status: i32 = match len {
+        let status: i32 = match num_params {
             // if we only have one field, it's the <stat> field. Parse it.
             1 => fields.next().ok_or("Missing ','")?.parse()?,
 

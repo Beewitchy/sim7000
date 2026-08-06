@@ -14,7 +14,7 @@ impl AtRequest for GetSystemInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SystemMode {
     NoService,
@@ -23,7 +23,60 @@ pub enum SystemMode {
     LteNbIot,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GsmModeParameters {
+    pub mcc: u16,
+    pub mnc: u16,
+    pub lac: u16,
+    pub cell_id: u16,
+    pub absolute_rf_ch_num: u16,
+    pub rx_lev: u16,
+    pub track_lo_adjust: u16,
+    pub c1: u16,
+    pub c2: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LteModeParameters {
+    pub mcc: u16,
+    pub mnc: u16,
+    pub tac: u16,
+    pub serving_cell_id: u16,
+    pub phys_cell_id: u16,
+    pub freq_band: u16,
+    pub e_ultra_channel_num: u16,
+    pub downlink_bandwidth: u16,
+    pub uplink_bandwidth: u16,
+    pub rsrq: u16,
+    pub rsrp: u16,
+    pub rssi: u16,
+    pub rssnr: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SystemModeParameters {
+    NoService,
+    Gsm(GsmModeParameters),
+    LteCatM1(LteModeParameters),
+    LteNbIot(LteModeParameters),
+}
+
+impl SystemModeParameters {
+    /// Returns the empty-variant [SystemMode] corresponding to these parameters
+    pub const fn mode(&self) -> SystemMode {
+        match self {
+            Self::NoService => SystemMode::NoService,
+            Self::Gsm(_) => SystemMode::Gsm,
+            Self::LteCatM1(_) => SystemMode::LteCatM1,
+            Self::LteNbIot(_) => SystemMode::LteNbIot,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OperationMode {
     Online,
@@ -33,21 +86,39 @@ pub enum OperationMode {
     LowPower,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl core::str::FromStr for OperationMode {
+    type Err = AtParseErr;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Online" => Ok(OperationMode::Online),
+            "Offline" => Ok(OperationMode::Offline),
+            "Factory Test Mode" => Ok(OperationMode::FactoryTest),
+            "Reset" => Ok(OperationMode::Reset),
+            "Low Power Mode" => Ok(OperationMode::LowPower),
+            _ => Err("Failed to parse Operation Mode".into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SystemInfo {
-    pub system_mode: SystemMode,
     pub operation_mode: OperationMode,
+    pub system_mode_parameters: SystemModeParameters,
+}
+
+impl SystemInfo {
+    pub const fn system_mode(&self) -> SystemMode {
+        self.system_mode_parameters.mode()
+    }
 }
 
 impl AtParseLine for SystemInfo {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        use core::str::FromStr as _;
         let line = line.strip_prefix("+CPSI:").ok_or(AtParseErr::Mismatch)?;
-        let (system_mode, rest) =
-            line.split_once(',').ok_or("Missing ','")?;
-
-        let [operation_mode, _mcc_mnc, _lac, _cell_id, _absolute_rf_ch_num, _rx_lev, _track_lo_adjust, _c1_c2] =
-            collect_array(rest.splitn(8, ',')).unwrap_or_else(|| [rest, "", "", "", "", "", "", ""]);
+        let (system_mode, rest) = line.split_once(',').ok_or("Missing ','")?;
 
         let system_mode = match system_mode.trim() {
             "NO SERVICE" => SystemMode::NoService,
@@ -57,19 +128,93 @@ impl AtParseLine for SystemInfo {
             _ => return Err("Failed to parse System Mode".into()),
         };
 
-        let operation_mode = match operation_mode.trim() {
-            "Online" => OperationMode::Online,
-            "Offline" => OperationMode::Offline,
-            "Factory Test Mode" => OperationMode::FactoryTest,
-            "Reset" => OperationMode::Reset,
-            "Low Power Mode" => OperationMode::LowPower,
-            _ => return Err("Failed to parse Operation Mode".into()),
+        let system_info = match system_mode {
+            SystemMode::NoService => SystemInfo {
+                operation_mode: OperationMode::from_str(rest)?,
+                system_mode_parameters: SystemModeParameters::NoService,
+            },
+            SystemMode::Gsm => {
+                let [
+                    operation_mode,
+                    mcc_mnc,
+                    lac,
+                    cell_id,
+                    absolute_rf_ch_num,
+                    rx_lev,
+                    track_lo_adjust,
+                    c1_c2,
+                ] = collect_array(rest.splitn(8, ',')).ok_or("Missing ','")?;
+                let (mcc, mnc) = mcc_mnc
+                    .split_once('-')
+                    .ok_or("Missing '-' in mcc-mnc parameter")?;
+                let (c1, c2) = c1_c2
+                    .split_once('-')
+                    .ok_or("Missing '-' in c1-c2 parameter")?;
+                let mcc = mcc.parse().map_err(|_| "Failed to parse mcc parameter")?;
+                let mnc = mnc.parse().map_err(|_| "Failed to parse mnc parameter")?;
+                SystemInfo {
+                    operation_mode: OperationMode::from_str(operation_mode)?,
+                    system_mode_parameters: SystemModeParameters::Gsm(GsmModeParameters {
+                        mcc,
+                        mnc,
+                        lac: lac.parse()?,
+                        cell_id: cell_id.parse()?,
+                        absolute_rf_ch_num: absolute_rf_ch_num.parse()?,
+                        rx_lev: rx_lev.parse()?,
+                        track_lo_adjust: track_lo_adjust.parse()?,
+                        c1: c1.parse()?,
+                        c2: c2.parse()?,
+                    }),
+                }
+            }
+            SystemMode::LteCatM1 | SystemMode::LteNbIot => {
+                let [
+                    operation_mode,
+                    mcc_mnc,
+                    tac,
+                    serving_cell_id,
+                    phys_cell_id,
+                    freq_band,
+                    e_ultra_channel_num,
+                    downlink_bandwidth,
+                    uplink_bandwidth,
+                    rsrq,
+                    rsrp,
+                    rssi,
+                    rssnr,
+                ] = collect_array(rest.splitn(13, ',')).ok_or("Missing ','")?;
+                let (mcc, mnc) = mcc_mnc
+                    .split_once('-')
+                    .ok_or("Missing '-' in mcc-mnc parameter")?;
+                let mcc = mcc.parse().map_err(|_| "Failed to parse mcc parameter")?;
+                let mnc = mnc.parse().map_err(|_| "Failed to parse mnc parameter")?;
+                let lte_mode_parameters = LteModeParameters {
+                    mcc,
+                    mnc,
+                    tac: tac.parse()?,
+                    serving_cell_id: serving_cell_id.parse()?,
+                    phys_cell_id: phys_cell_id.parse()?,
+                    freq_band: freq_band.parse()?,
+                    e_ultra_channel_num: e_ultra_channel_num.parse()?,
+                    downlink_bandwidth: downlink_bandwidth.parse()?,
+                    uplink_bandwidth: uplink_bandwidth.parse()?,
+                    rsrq: rsrq.parse()?,
+                    rsrp: rsrp.parse()?,
+                    rssi: rssi.parse()?,
+                    rssnr: rssnr.parse()?,
+                };
+                SystemInfo {
+                    operation_mode: OperationMode::from_str(operation_mode)?,
+                    system_mode_parameters: match system_mode {
+                        SystemMode::LteCatM1 => SystemModeParameters::LteCatM1(lte_mode_parameters),
+                        SystemMode::LteNbIot => SystemModeParameters::LteNbIot(lte_mode_parameters),
+                        SystemMode::NoService => unreachable!(),
+                        SystemMode::Gsm => unreachable!(),
+                    },
+                }
+            }
         };
-
-        Ok(SystemInfo {
-            system_mode,
-            operation_mode,
-        })
+        Ok(system_info)
     }
 }
 

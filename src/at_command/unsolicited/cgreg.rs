@@ -1,4 +1,4 @@
-use super::{network_registration::RegistrationStatus, NetworkRegistration};
+use super::{NetworkRegistration, network_registration::RegistrationStatus};
 use crate::at_command::AtParseErr;
 
 /// Network registration status
@@ -8,17 +8,16 @@ pub struct CGReg;
 
 impl CGReg {
     pub(crate) fn parse(line: &str) -> Result<NetworkRegistration, AtParseErr> {
-        let (message, rest) = line.split_once(": ").ok_or("Missing ': '")?;
-        if message != "+CGREG" {
-            return Err("Missing '+CGREG'".into());
-        }
+        let rest = line
+            .strip_prefix("+CGREG:")
+            .ok_or(AtParseErr::Mismatch)?
+            .trim_start();
 
-        let len = 1 + rest.chars().filter(|&c| c == ',').count();
-
+        let num_params = 1 + rest.matches(',').count();
         let mut fields = rest.split(',');
 
         // skip the <n> field if it exists
-        match len {
+        match num_params {
             // URC variant
             // <stat>[,<lac>,<ci>,<netact>]
             1 | 4 => {}
