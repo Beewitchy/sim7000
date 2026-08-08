@@ -108,14 +108,24 @@ macro_rules! try_retry {
     }};
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadyState {
     #[default]
     None,
+    PowerDown,
     Ready,
     SmsReady,
-    PowerDown,
+}
+
+impl ReadyState {
+    #[inline]
+    pub const fn is_ready(&self) -> bool {
+        match self {
+            Self::None | Self::PowerDown => false,
+            Self::Ready | Self::SmsReady => true,
+        }
+    }
 }
 
 impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP_SLOTS> {
@@ -208,19 +218,19 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         for attempt in 0..max_tries {
             if with_timeout(
                 Duration::from_secs(attempt * 5),
-                ready.get_and(|ready| matches!(ready, ReadyState::Ready)),
+                ready.get_and(ReadyState::is_ready),
             )
             .await
             .is_ok()
             {
-                break;
+                return Ok(());
             }
             // It's possible the RDY message from the modem was missed--
             //  try sending an AT to get a response. I believe a non-error
             //  response indicates the modem is up
             if let Ok(mut commands) = self.commands.try_lock() {
                 if commands.run(At).await.is_ok() {
-                    break;
+                    return Ok(());
                 }
             }
             // Deactivating and rebooting seems to be often not needed,
@@ -230,7 +240,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
             }
         }
-        Ok(())
+        match ready.try_get_and(ReadyState::is_ready) {
+            None => Err(Error::Timeout),
+            Some(_) => Ok(())
+        }
     }
 
     pub async fn init(
@@ -588,7 +601,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn deactivate(&mut self) -> Result<(), Error> {
         if !matches!(self.power.state(), PowerState::Off)
-            && matches!(self.context.ready.try_get(), Some(ReadyState::Ready))
+            && self.context.ready.try_get_and(ReadyState::is_ready).is_some()
         {
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
