@@ -42,7 +42,7 @@ pub enum LteFrequencyBand {
 impl core::str::FromStr for LteFrequencyBand {
     type Err = AtParseErr;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(s) = s.strip_prefix("") {
+        if let Some(s) = s.strip_prefix("EUTRAN-BAND") {
             let band = s.parse().map_err(|_| "Failed to parse UTran band number")?;
             Ok(Self::EUtran(band))
         } else {
@@ -221,7 +221,7 @@ impl AtParseLine for SystemInfo {
                 } else {
                     u16::from_str_radix(tac, 10)?
                 };
-                let freq_band = match LteFrequencyBand::from_str(freq_band) {
+                let freq_band = match LteFrequencyBand::from_str(freq_band.trim()) {
                     Ok(freq_band) => freq_band,
                     Err(err) => {
                         log::info!("Unknown frequency band '{:?}' in CPSI response", freq_band);
@@ -232,16 +232,16 @@ impl AtParseLine for SystemInfo {
                     mcc,
                     mnc,
                     tac,
-                    serving_cell_id: serving_cell_id.parse()?,
-                    phys_cell_id: phys_cell_id.parse()?,
+                    serving_cell_id: serving_cell_id.trim().parse()?,
+                    phys_cell_id: phys_cell_id.trim().parse()?,
                     freq_band,
-                    e_ultra_channel_num: e_ultra_channel_num.parse()?,
-                    downlink_bandwidth: downlink_bandwidth.parse()?,
-                    uplink_bandwidth: uplink_bandwidth.parse()?,
-                    rsrq: rsrq.parse()?,
-                    rsrp: rsrp.parse()?,
-                    rssi: rssi.parse()?,
-                    rssnr: rssnr.parse()?,
+                    e_ultra_channel_num: e_ultra_channel_num.trim().parse()?,
+                    downlink_bandwidth: downlink_bandwidth.trim().parse()?,
+                    uplink_bandwidth: uplink_bandwidth.trim().parse()?,
+                    rsrq: rsrq.trim().parse()?,
+                    rsrp: rsrp.trim().parse()?,
+                    rssi: rssi.trim().parse()?,
+                    rssnr: rssnr.trim().parse()?,
                 };
                 SystemInfo {
                     operation_mode: OperationMode::from_str(operation_mode)?,
