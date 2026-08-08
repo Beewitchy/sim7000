@@ -539,7 +539,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
                 log::info!("Trying {:?}...", mode);
                 let _ = commands.run(cgreg::GetRegistrationStatus).await;
-                match self.wait_for_registration(Some(self.auto_reg_timeout)).await {
+                match self
+                    .wait_for_registration(Some(self.auto_reg_timeout))
+                    .await
+                {
                     Ok(_) => {
                         log::info!("Registered using {:?}", mode);
                         return Ok(*mode);
@@ -590,12 +593,20 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
             // result ignored because power-off should proceed regardless
-            let _ = commands
+            match commands
                 .run_with_timeout(
                     Some(Duration::from_secs(10)),
                     cpowd::PowerDown(cpowd::Mode::Normal),
                 )
-                .await;
+                .await
+            {
+                Ok(_power_down) => {
+                    log::debug!("Modem powered down, {:?}", _power_down);
+                }
+                Err(_err) => {
+                    log::warn!("Power down command didn't complete, {:?}", _err);
+                }
+            }
         }
         self.context.sms_state.signal(SmsState::Unavailable);
         self.active_signal.broadcast(PowerState::Off);
@@ -636,37 +647,39 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     /// Wait until the modem has registered to a cell tower.
-    pub async fn wait_for_registration(&self, timeout: Option<embassy_time::Duration>) -> Result<NetworkRegistration, Error> {
+    pub async fn wait_for_registration(
+        &self,
+        timeout: Option<embassy_time::Duration>,
+    ) -> Result<NetworkRegistration, Error> {
         log::debug!("waiting for cell registration");
         let timeout = timeout.unwrap_or(Duration::from_secs(10 * 60));
         const LONG_REG_DURATION: Duration = Duration::from_secs(20);
         let long_timeout = timeout > LONG_REG_DURATION;
         let waiter = async move {
-            let wait_for_status = self.context
-                .registration_events
-                .compare_wait(|r| {
-                    [
-                        RegistrationStatus::RegisteredHome,
-                        RegistrationStatus::RegisteredRoaming,
-                    ]
-                    .contains(&r.status)
-                });
+            let wait_for_status = self.context.registration_events.compare_wait(|r| {
+                [
+                    RegistrationStatus::RegisteredHome,
+                    RegistrationStatus::RegisteredRoaming,
+                ]
+                .contains(&r.status)
+            });
             if long_timeout {
-                match embassy_futures::select::select(
-                    wait_for_status,
-                    async {
-                        loop {
-                            for i in 1.. {
-                                Timer::after(LONG_REG_DURATION).await;
-                                log::warn!(
-                                    "modem registration seems to be taking a long time ({}s)...",
-                                    i * LONG_REG_DURATION.as_secs()
-                                );
-                            }
+                match embassy_futures::select::select(wait_for_status, async {
+                    loop {
+                        for i in 1.. {
+                            Timer::after(LONG_REG_DURATION).await;
+                            log::warn!(
+                                "modem registration seems to be taking a long time ({}s)...",
+                                i * LONG_REG_DURATION.as_secs()
+                            );
                         }
                     }
-                ).await {
-                    embassy_futures::select::Either::First(network_registration) => network_registration
+                })
+                .await
+                {
+                    embassy_futures::select::Either::First(network_registration) => {
+                        network_registration
+                    }
                 }
             } else {
                 wait_for_status.await
