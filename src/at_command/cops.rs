@@ -76,6 +76,9 @@ impl AtParseLine for OperatorInfo {
 }
 
 impl AtResponse for OperatorInfo {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::OperatorInfo;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::OperatorInfo(info) => Some(info),

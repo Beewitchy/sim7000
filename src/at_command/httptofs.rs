@@ -101,6 +101,9 @@ impl AtParseLine for DownloadInfo {
 }
 
 impl AtResponse for DownloadInfo {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::DownloadInfo;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::DownloadInfo(v) => Some(v),

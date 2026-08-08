@@ -48,6 +48,8 @@ impl AtParseLine for SmsMessageFormat {
 }
 
 impl AtResponse for SmsMessageFormat {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SmsMessageFormat;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::SmsMessageFormat(format) => Some(format),

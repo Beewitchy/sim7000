@@ -30,6 +30,9 @@ impl AtRequest for GetProductInformation {
 pub struct Csub(pub String<7>);
 
 impl AtResponse for Csub {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Csub;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::Csub(v) => Some(v),
@@ -44,6 +47,9 @@ impl AtResponse for Csub {
 pub struct ApRev;
 
 impl AtResponse for ApRev {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ApRev;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::ApRev(v) => Some(v),
@@ -57,6 +63,9 @@ impl AtResponse for ApRev {
 pub struct QualityControlNumber(pub String<24>);
 
 impl AtResponse for QualityControlNumber {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::QualityControlNumber;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::QualityControlNumber(v) => Some(v),
@@ -70,6 +79,9 @@ impl AtResponse for QualityControlNumber {
 pub struct ProductInfoImei(pub Imei);
 
 impl AtResponse for ProductInfoImei {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ProductInfoImei;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::ProductInfoImei(v) => Some(v),

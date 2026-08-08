@@ -107,6 +107,9 @@ fn parse_arguments(line: &str) -> Result<GnssXtraInfo, AtParseErr> {
 }
 
 impl AtResponse for GnssXtraInfo {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::XtraInfo;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::XtraInfo(v) => Some(v),

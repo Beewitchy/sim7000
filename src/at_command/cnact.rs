@@ -96,6 +96,9 @@ impl AtParseLine for CNActPDP {
 }
 
 impl AtResponse for CNActPDP {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::PdpNetworkActive;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::PdpNetworkActive(v) => Some(v),

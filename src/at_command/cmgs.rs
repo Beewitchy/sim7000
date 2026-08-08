@@ -50,6 +50,7 @@ impl AtParseLine for MessageReference {
 }
 
 impl AtResponse for MessageReference {
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::MessageReference;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::MessageReference(format) => Some(format),

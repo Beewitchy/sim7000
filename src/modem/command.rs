@@ -239,7 +239,8 @@ where
                         unexpected_response => {
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
-                            log::warn!("Got unexpected ATResponse: {:?}", unexpected_response)
+                            #[cfg(any(feature = "log", feature = "defmt"))]
+                            log::warn!("Got unexpected response {:?} while waiting for {:?}", unexpected_response, T::RESPONSE_KIND);
                         }
                     }
                 }
@@ -277,7 +278,8 @@ where
                         unexpected_response => {
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
-                            log::warn!("Got unexpected ATResponse: {:?}", unexpected_response)
+                            #[cfg(any(feature = "log", feature = "defmt"))]
+                            log::warn!("Got unexpected response {:?} while waiting for {:?} or {:?}", unexpected_response, T1::RESPONSE_KIND, T2::RESPONSE_KIND);
                         }
                     },
                 },

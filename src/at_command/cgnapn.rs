@@ -49,6 +49,9 @@ impl AtParseLine for NetworkApn {
 }
 
 impl AtResponse for NetworkApn {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::NetworkApn;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::NetworkApn(v) => Some(v),

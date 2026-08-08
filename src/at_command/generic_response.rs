@@ -36,6 +36,9 @@ impl AtParseLine for GenericOk {
 }
 
 impl AtResponse for GenericOk {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Ok;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::Ok(ok) => Some(ok),
@@ -72,6 +75,9 @@ impl AtParseLine for WritePrompt {
 }
 
 impl AtResponse for WritePrompt {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::WritePrompt;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::WritePrompt(prompt) => Some(prompt),
@@ -92,6 +98,9 @@ impl AtParseLine for CloseOk {
 }
 
 impl AtResponse for CloseOk {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CloseOk;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::CloseOk(close_ok) => Some(close_ok),

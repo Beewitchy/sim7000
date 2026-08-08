@@ -16,6 +16,8 @@ pub enum PowerDown {
 }
 
 impl AtResponse for PowerDown {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: crate::at_command::ResponseCodeKind = crate::at_command::ResponseCodeKind::PowerDown;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::PowerDown(v) => Some(v),

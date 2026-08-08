@@ -50,6 +50,9 @@ impl AtParseLine for Iccid {
 }
 
 impl AtResponse for Iccid {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Iccid;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::Iccid(iccid) => Some(iccid),

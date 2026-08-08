@@ -62,6 +62,9 @@ impl AtParseLine for FwVersion {
 }
 
 impl AtResponse for FwVersion {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::FwVersion;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::FwVersion(fw_version) => Some(fw_version),

@@ -139,6 +139,9 @@ impl AtParseLine for ConfigureEDRX {
 }
 
 impl AtResponse for ConfigureEDRX {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ConfigureEDRX;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::ConfigureEDRX(configure_edrx) => Some(configure_edrx),

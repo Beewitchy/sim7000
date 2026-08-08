@@ -46,6 +46,9 @@ impl AtParseLine for CclkTime {
 }
 
 impl AtResponse for CclkTime {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CclkTime;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::CclkTime(time) => Some(time),

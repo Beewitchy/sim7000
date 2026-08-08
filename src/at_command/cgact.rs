@@ -52,6 +52,9 @@ impl AtParseLine for CGact {
 }
 
 impl AtResponse for CGact {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::PdpContextActivation;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::PdpContextActivation(v) => Some(v),

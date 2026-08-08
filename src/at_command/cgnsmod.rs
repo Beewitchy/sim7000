@@ -115,6 +115,9 @@ impl AtParseLine for GnssWorkModeSet {
 }
 
 impl AtResponse for Option<GnssWorkModeSet> {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::GnssWorkModeSet;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::GnssWorkModeSet(v) => Some(v),

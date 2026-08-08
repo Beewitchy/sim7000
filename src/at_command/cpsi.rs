@@ -259,6 +259,9 @@ impl AtParseLine for SystemInfo {
 }
 
 impl AtResponse for SystemInfo {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SystemInfo;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::SystemInfo(v) => Some(v),

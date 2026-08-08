@@ -325,12 +325,16 @@ impl<T, U> AsMut<U> for MetaResponse<T, U> {
 }
 
 pub trait AtResponse: Sized {
+    #[cfg(any(feature = "defmt", feature = "log"))]
+    const RESPONSE_KIND: ResponseCodeKind;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self>;
 }
 
 /// Sim7000 AT-command response code
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(any(feature = "defmt", feature = "log"), derive(kinded::Kinded))]
+#[cfg_attr(feature = "defmt", kinded(derive(defmt::Format)))]
 pub enum ResponseCode {
     Ok(GenericOk),
     Error(SimError),

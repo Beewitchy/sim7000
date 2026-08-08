@@ -34,6 +34,8 @@ impl AtParseLine for IpExt {
 }
 
 impl AtResponse for IpExt {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::IpExt;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::IpExt(ip_ext) => Some(ip_ext),

@@ -126,6 +126,9 @@ impl AtParseLine for GnssReport {
 }
 
 impl AtResponse for GnssReport {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::GnssReport;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::GnssReport(v) => Some(v),

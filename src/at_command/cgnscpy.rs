@@ -45,6 +45,9 @@ impl AtParseLine for CopyResponse {
 }
 
 impl AtResponse for CopyResponse {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CopyResponse;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::CopyResponse(v) => Some(v),

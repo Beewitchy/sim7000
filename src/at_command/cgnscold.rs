@@ -73,6 +73,9 @@ impl AtParseLine for XtraStatus {
 }
 
 impl AtResponse for XtraStatus {
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::XtraStatus;
+    #[inline]
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
         match code {
             ResponseCode::XtraStatus(v) => Some(v),
