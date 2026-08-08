@@ -26,6 +26,30 @@ pub enum SystemMode {
     LteNbIot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum LteFrequencyBand {
+    /// E-UTRAN band of the given number.
+    /// See https://en.wikipedia.org/wiki/LTE_frequency_bands#Frequency_bands_and_channel_bandwidths
+    EUtran(u8),
+    /// Unknown band.
+    /// See info log `Unknown frequency band 'name' in CPSI response`
+    /// for the listed string if this is parsed.
+    Unknown
+}
+
+impl core::str::FromStr for LteFrequencyBand {
+    type Err = AtParseErr;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(s) = s.strip_prefix("") {
+            let band = s.parse().map_err(|_| "Failed to parse UTran band number")?;
+            Ok(Self::EUtran(band))
+        } else {
+            Err("Unknown LTE band identifier".into())
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GsmModeParameters {
@@ -46,16 +70,16 @@ pub struct LteModeParameters {
     pub mcc: plmn::Mcc,
     pub mnc: plmn::Mnc,
     pub tac: u16,
-    pub serving_cell_id: u16,
+    pub serving_cell_id: u32,
     pub phys_cell_id: u16,
-    pub freq_band: u16,
+    pub freq_band: LteFrequencyBand,
     pub e_ultra_channel_num: u16,
-    pub downlink_bandwidth: u16,
-    pub uplink_bandwidth: u16,
-    pub rsrq: u16,
-    pub rsrp: u16,
-    pub rssi: u16,
-    pub rssnr: u16,
+    pub downlink_bandwidth: u8,
+    pub uplink_bandwidth: u8,
+    pub rsrq: i16,
+    pub rsrp: i16,
+    pub rssi: i16,
+    pub rssnr: i16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -191,13 +215,25 @@ impl AtParseLine for SystemInfo {
                     .ok_or("Missing '-' in mcc-mnc parameter")?;
                 let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
                 let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
+                let tac = if let Some(tac) = tac.strip_prefix("0x") {
+                    u16::from_str_radix(tac, 16)?
+                } else {
+                    u16::from_str_radix(tac, 10)?
+                };
+                let freq_band = match LteFrequencyBand::from_str(freq_band) {
+                    Ok(freq_band) => freq_band,
+                    Err(err) => {
+                        log::info!("Unknown frequency band '{:?}' in CPSI response", freq_band);
+                        return Err(err);
+                    }
+                };
                 let lte_mode_parameters = LteModeParameters {
                     mcc,
                     mnc,
-                    tac: tac.parse()?,
+                    tac,
                     serving_cell_id: serving_cell_id.parse()?,
                     phys_cell_id: phys_cell_id.parse()?,
-                    freq_band: freq_band.parse()?,
+                    freq_band,
                     e_ultra_channel_num: e_ultra_channel_num.parse()?,
                     downlink_bandwidth: downlink_bandwidth.parse()?,
                     uplink_bandwidth: uplink_bandwidth.parse()?,
