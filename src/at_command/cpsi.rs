@@ -1,4 +1,5 @@
 use crate::util::collect_array;
+use crate::log;
 
 use super::{
     AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode,
