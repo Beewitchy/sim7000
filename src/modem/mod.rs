@@ -210,14 +210,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
-        self.active_signal.clear();
         if matches!(self.power.state(), PowerState::Off) {
+            self.active_signal.clear();
             with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
         }
         self.active_signal.broadcast(PowerState::On);
         for attempt in 0..max_tries {
             if with_timeout(
-                Duration::from_secs(attempt * 5),
+                Duration::from_secs(2 + attempt * 3),
                 ready.get_and(ReadyState::is_ready),
             )
             .await
@@ -635,8 +635,6 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         // Run drop work after powering down: this allows drop commands
         //  to avoid unnecessary work for the powered-down state
         let drop_result = self.async_drop().await;
-
-        self.context.ready.sender().send(ReadyState::None);
 
         drop_result
     }
