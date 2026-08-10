@@ -226,18 +226,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             {
                 return Ok(());
             }
-            // It's possible the RDY message from the modem was missed--
-            //  try sending an AT to get a response. I believe a non-error
-            //  response indicates the modem is up
-            // if let Ok(mut commands) = self.commands.try_lock() {
-            //     if commands.run(At).await.is_ok() {
-            //         return Ok(());
-            //     }
-            // }
-            // Deactivating and rebooting seems to be often not needed,
-            //  so only try it every other attempt
+            // Skip powering down every other attempt
             if attempt % 2 != 0 {
-                // self.deactivate().await?;
                 self.async_drop().await?;
                 if !matches!(self.power.state(), PowerState::Off) {
                     with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
@@ -249,8 +239,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                         )
                         .await;
                 }
-                embassy_time::Timer::after_secs(5).await;
             }
+            embassy_time::Timer::after_secs(5).await;
         }
         match ready.try_get_and(ReadyState::is_ready) {
             None => Err(Error::Timeout),

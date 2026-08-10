@@ -1,7 +1,2 @@
-[build]
-rustflags = [
-	"-Zpolonius=next",
-]
-
-[unstable]
-build-std = ["alloc", "core"]
+# [unstable]
+# build-std = ["compiler_builtins", "alloc", "core"]

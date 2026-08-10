@@ -1,10 +1,7 @@
-use crate::util::collect_array;
 use crate::log;
+use crate::util::collect_array;
 
-use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode,
-    plmn,
-};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, plmn};
 
 /// AT+CPSI?
 #[derive(Debug)]
@@ -27,16 +24,70 @@ pub enum SystemMode {
     LteNbIot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// See https://en.wikipedia.org/wiki/GSM_frequency_bands
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GsmFrequencyBandAndChannel {
+    TGSM380,
+    TGSM410,
+    GSM450(u16),
+    GSM480(u16),
+    GSM710,
+    GSM750(u16),
+    TGSM810,
+    GSM850(u16),
+    PGSM900(u16),
+    EGSM900(u16),
+    RGSM900(u16),
+    TGSM900,
+    DCS1800(u16),
+    PCS1900(u16),
+    /// Unknown band.
+    /// See info log `Unknown frequency band 'name' in CPSI response`
+    /// for the listed string if this is parsed.
+    #[default]
+    Unknown,
+}
+
+impl core::str::FromStr for GsmFrequencyBandAndChannel {
+    type Err = AtParseErr;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (channel, s) = if let Some((channel, rest)) = s.split_once(char::is_whitespace) {
+            (u16::from_str_radix(channel, 10).map_err(|_| "Failed to parse channel number")?, rest.trim_start())
+        } else {
+            (0, s)
+        };
+        match s {
+            "TGSM 380" => Ok(Self::TGSM380),
+            "TGSM 410" => Ok(Self::TGSM410),
+            "GSM 450" => Ok(Self::GSM450(channel)),
+            "GSM 480" => Ok(Self::GSM480(channel)),
+            "GSM 710" => Ok(Self::GSM710),
+            "GSM 750" => Ok(Self::GSM750(channel)),
+            "TGSM 810" => Ok(Self::TGSM810),
+            "GSM 850" => Ok(Self::GSM850(channel)),
+            "PGSM 900" => Ok(Self::PGSM900(channel)),
+            "EGSM 900" => Ok(Self::EGSM900(channel)),
+            "RGSM 900" => Ok(Self::RGSM900(channel)),
+            "TGSM 900" => Ok(Self::TGSM900),
+            "DCS 1800" => Ok(Self::DCS1800(channel)),
+            "PCS 1900" => Ok(Self::PCS1900(channel)),
+            _ => Err("Unknown GSM band identifier".into()),
+        }
+    }
+}
+
+/// See https://en.wikipedia.org/wiki/LTE_frequency_bands#Frequency_bands_and_channel_bandwidths
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LteFrequencyBand {
     /// E-UTRAN band of the given number.
-    /// See https://en.wikipedia.org/wiki/LTE_frequency_bands#Frequency_bands_and_channel_bandwidths
     EUtran(u8),
     /// Unknown band.
     /// See info log `Unknown frequency band 'name' in CPSI response`
     /// for the listed string if this is parsed.
-    Unknown
+    #[default]
+    Unknown,
 }
 
 impl core::str::FromStr for LteFrequencyBand {
@@ -51,21 +102,21 @@ impl core::str::FromStr for LteFrequencyBand {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GsmModeParameters {
     pub mcc: plmn::Mcc,
     pub mnc: plmn::Mnc,
     pub lac: u16,
     pub cell_id: u16,
-    pub absolute_rf_ch_num: u16,
-    pub rx_lev: u16,
+    pub freq_and_channel: GsmFrequencyBandAndChannel,
+    pub rx_lev: i16,
     pub track_lo_adjust: u16,
     pub c1: u16,
     pub c2: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LteModeParameters {
     pub mcc: plmn::Mcc,
@@ -156,105 +207,133 @@ impl AtParseLine for SystemInfo {
             _ => return Err("Failed to parse System Mode".into()),
         };
 
-        let system_info = match system_mode {
-            SystemMode::NoService => SystemInfo {
-                operation_mode: OperationMode::from_str(rest)?,
-                system_mode_parameters: SystemModeParameters::NoService,
-            },
-            SystemMode::Gsm => {
-                let [
-                    operation_mode,
-                    mcc_mnc,
-                    lac,
-                    cell_id,
-                    absolute_rf_ch_num,
-                    rx_lev,
-                    track_lo_adjust,
-                    c1_c2,
-                ] = collect_array(rest.splitn(8, ',')).ok_or("Missing ','")?;
-                let (mcc, mnc) = mcc_mnc
-                    .split_once('-')
-                    .ok_or("Missing '-' in mcc-mnc parameter")?;
-                let (c1, c2) = c1_c2
-                    .split_once('-')
-                    .ok_or("Missing '-' in c1-c2 parameter")?;
-                let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
-                let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
-                SystemInfo {
-                    operation_mode: OperationMode::from_str(operation_mode)?,
-                    system_mode_parameters: SystemModeParameters::Gsm(GsmModeParameters {
+        if let Some((operation_mode, rest)) = rest.split_once(',') {
+            let operation_mode = OperationMode::from_str(operation_mode)?;
+            let system_mode_parameters = match system_mode {
+                SystemMode::NoService => SystemModeParameters::NoService,
+                SystemMode::Gsm => {
+                    let [
+                        mcc_mnc,
+                        lac,
+                        cell_id,
+                        freq_and_channel,
+                        rx_lev,
+                        track_lo_adjust,
+                        c1_c2,
+                    ] = collect_array(rest.splitn(7, ',')).ok_or("Missing ','")?;
+                    let (mcc, mnc) = mcc_mnc
+                        .split_once('-')
+                        .ok_or("Missing '-' in mcc-mnc parameter")?;
+                    let (c1, c2) = c1_c2
+                        .split_once('-')
+                        .ok_or("Missing '-' in c1-c2 parameter")?;
+                    let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
+                    let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
+                    let lac = if let Some(lac) = lac.strip_prefix("0x") {
+                        u16::from_str_radix(lac, 16)
+                    } else {
+                        u16::from_str_radix(lac, 10)
+                    }.map_err(|_| "Failed to parse lac")?;
+                    let freq_and_channel =
+                        match GsmFrequencyBandAndChannel::from_str(freq_and_channel.trim()) {
+                            Ok(freq_and_channel) => freq_and_channel,
+                            Err(err) => {
+                                log::info!(
+                                    "Unknown frequency band '{:?}' in CPSI response",
+                                    freq_and_channel
+                                );
+                                return Err(err);
+                            }
+                        };
+                    SystemModeParameters::Gsm(GsmModeParameters {
                         mcc,
                         mnc,
-                        lac: lac.parse()?,
-                        cell_id: cell_id.parse()?,
-                        absolute_rf_ch_num: absolute_rf_ch_num.parse()?,
-                        rx_lev: rx_lev.parse()?,
-                        track_lo_adjust: track_lo_adjust.parse()?,
+                        lac,
+                        cell_id: cell_id.parse().map_err(|_| "Failed to parse cell id")?,
+                        freq_and_channel,
+                        rx_lev: rx_lev.parse().map_err(|_| "Failed to parse rx level")?,
+                        track_lo_adjust: track_lo_adjust.parse().map_err(|_| "Failed to parse lo adjust")?,
                         c1: c1.parse()?,
                         c2: c2.parse()?,
-                    }),
+                    })
                 }
-            }
-            SystemMode::LteCatM1 | SystemMode::LteNbIot => {
-                let [
-                    operation_mode,
-                    mcc_mnc,
-                    tac,
-                    serving_cell_id,
-                    phys_cell_id,
-                    freq_band,
-                    e_ultra_channel_num,
-                    downlink_bandwidth,
-                    uplink_bandwidth,
-                    rsrq,
-                    rsrp,
-                    rssi,
-                    rssnr,
-                ] = collect_array(rest.splitn(13, ',')).ok_or("Missing ','")?;
-                let (mcc, mnc) = mcc_mnc
-                    .split_once('-')
-                    .ok_or("Missing '-' in mcc-mnc parameter")?;
-                let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
-                let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
-                let tac = if let Some(tac) = tac.strip_prefix("0x") {
-                    u16::from_str_radix(tac, 16)?
-                } else {
-                    u16::from_str_radix(tac, 10)?
-                };
-                let freq_band = match LteFrequencyBand::from_str(freq_band.trim()) {
-                    Ok(freq_band) => freq_band,
-                    Err(err) => {
-                        log::info!("Unknown frequency band '{:?}' in CPSI response", freq_band);
-                        return Err(err);
-                    }
-                };
-                let lte_mode_parameters = LteModeParameters {
-                    mcc,
-                    mnc,
-                    tac,
-                    serving_cell_id: serving_cell_id.trim().parse()?,
-                    phys_cell_id: phys_cell_id.trim().parse()?,
-                    freq_band,
-                    e_ultra_channel_num: e_ultra_channel_num.trim().parse()?,
-                    downlink_bandwidth: downlink_bandwidth.trim().parse()?,
-                    uplink_bandwidth: uplink_bandwidth.trim().parse()?,
-                    rsrq: rsrq.trim().parse()?,
-                    rsrp: rsrp.trim().parse()?,
-                    rssi: rssi.trim().parse()?,
-                    rssnr: rssnr.trim().parse()?,
-                };
-                SystemInfo {
-                    operation_mode: OperationMode::from_str(operation_mode)?,
-                    system_mode_parameters: match system_mode {
+                SystemMode::LteCatM1 | SystemMode::LteNbIot => {
+                    let [
+                        mcc_mnc,
+                        tac,
+                        serving_cell_id,
+                        phys_cell_id,
+                        freq_band,
+                        e_ultra_channel_num,
+                        downlink_bandwidth,
+                        uplink_bandwidth,
+                        rsrq,
+                        rsrp,
+                        rssi,
+                        rssnr,
+                    ] = collect_array(rest.splitn(12, ',')).ok_or("Missing ','")?;
+                    let (mcc, mnc) = mcc_mnc
+                        .split_once('-')
+                        .ok_or("Missing '-' in mcc-mnc parameter")?;
+                    let mcc = plmn::Mcc::from_str(mcc).ok_or("Failed to parse mcc parameter")?;
+                    let mnc = plmn::Mnc::from_str(mnc).ok_or("Failed to parse mnc parameter")?;
+                    let tac = if let Some(tac) = tac.strip_prefix("0x") {
+                        u16::from_str_radix(tac, 16)
+                    } else {
+                        u16::from_str_radix(tac, 10)
+                    }.map_err(|_| "Failed to parse tac")?;
+                    let freq_band = match LteFrequencyBand::from_str(freq_band.trim()) {
+                        Ok(freq_band) => freq_band,
+                        Err(err) => {
+                            log::info!("Unknown frequency band '{:?}' in CPSI response", freq_band);
+                            return Err(err);
+                        }
+                    };
+                    let lte_mode_parameters = LteModeParameters {
+                        mcc,
+                        mnc,
+                        tac,
+                        serving_cell_id: serving_cell_id.trim().parse()?,
+                        phys_cell_id: phys_cell_id.trim().parse()?,
+                        freq_band,
+                        e_ultra_channel_num: e_ultra_channel_num.trim().parse()?,
+                        downlink_bandwidth: downlink_bandwidth.trim().parse()?,
+                        uplink_bandwidth: uplink_bandwidth.trim().parse()?,
+                        rsrq: rsrq.trim().parse()?,
+                        rsrp: rsrp.trim().parse()?,
+                        rssi: rssi.trim().parse()?,
+                        rssnr: rssnr.trim().parse()?,
+                    };
+                    match system_mode {
                         SystemMode::LteCatM1 => SystemModeParameters::LteCatM1(lte_mode_parameters),
                         SystemMode::LteNbIot => SystemModeParameters::LteNbIot(lte_mode_parameters),
                         SystemMode::NoService => unreachable!(),
                         SystemMode::Gsm => unreachable!(),
-                    },
+                    }
                 }
-            }
-        };
-        Ok(system_info)
+            };
+            Ok(SystemInfo { operation_mode, system_mode_parameters })
+        } else {
+            let operation_mode = OperationMode::from_str(rest)?;
+            Ok(match system_mode {
+                SystemMode::NoService => SystemInfo {
+                    operation_mode,
+                    system_mode_parameters: SystemModeParameters::NoService,
+                },
+                SystemMode::Gsm => SystemInfo {
+                    operation_mode,
+                    system_mode_parameters: SystemModeParameters::Gsm(GsmModeParameters::default()),
+                },
+                SystemMode::LteCatM1 => SystemInfo {
+                    operation_mode,
+                    system_mode_parameters: SystemModeParameters::LteCatM1(LteModeParameters::default()),
+                },
+                SystemMode::LteNbIot => SystemInfo {
+                    operation_mode,
+                    system_mode_parameters: SystemModeParameters::LteNbIot(LteModeParameters::default()),
+                }
+            })
+        }
     }
 }
 
@@ -272,16 +351,68 @@ impl AtResponse for SystemInfo {
 
 #[cfg(test)]
 mod test {
+    use super::super::plmn;
     use super::*;
     #[test]
     fn parse_cpsi() {
-        let valid_cpsis = [
-            "+CPSI: GSM,Online,240-24,0x28a0,50183,61 EGSM 900,-53,0,58-58",
-            "+CPSI: LTE CAT-M1,Online,240-07,0x2AFE,34564631,149,EUTRAN-BAND20,6400,3,3,-12,-81,-52,10",
-        ];
-
-        for valid in valid_cpsis {
-            assert!(SystemInfo::from_line(valid, &embassy_time::Instant::now()).is_ok());
-        }
+        let now = embassy_time::Instant::now();
+        assert_eq!(
+            SystemInfo::from_line("+CPSI: NO SERVICE,Online", &now).ok(),
+            Some(SystemInfo {
+                operation_mode: OperationMode::Online,
+                system_mode_parameters: SystemModeParameters::NoService,
+            })
+        );
+        assert_eq!(
+            SystemInfo::from_line(
+                "+CPSI: GSM,Online,240-24,0x28a0,50183,61 EGSM 900,-53,0,58-58",
+                &now
+            ).unwrap(),
+            SystemInfo {
+                operation_mode: OperationMode::Online,
+                system_mode_parameters: SystemModeParameters::Gsm(GsmModeParameters {
+                    mcc: plmn::Mcc::new(240),
+                    mnc: plmn::Mnc::new_short(24),
+                    lac: 0x28a0,
+                    cell_id: 50183,
+                    freq_and_channel: GsmFrequencyBandAndChannel::EGSM900(61),
+                    rx_lev: -53,
+                    track_lo_adjust: 0,
+                    c1: 58,
+                    c2: 58
+                }),
+            }
+        );
+        assert_eq!(
+            SystemInfo::from_line(
+                "+CPSI: LTE CAT-M1,Online,240-07,0x2AFE,34564631,149,EUTRAN-BAND20,6400,3,3,-12,-81,-52,10",
+                &now
+            ).unwrap(),
+            SystemInfo {
+                operation_mode: OperationMode::Online,
+                system_mode_parameters: SystemModeParameters::LteCatM1(LteModeParameters {
+                    mcc: plmn::Mcc::new(240),
+                    mnc: plmn::Mnc::new_short(7),
+                    tac: 0x2AFE,
+                    serving_cell_id: 34564631,
+                    phys_cell_id: 149,
+                    freq_band: LteFrequencyBand::EUtran(20),
+                    e_ultra_channel_num: 6400,
+                    downlink_bandwidth: 3,
+                    uplink_bandwidth: 3,
+                    rsrq: -12,
+                    rsrp: -81,
+                    rssi: -52,
+                    rssnr: 10
+                }),
+            }
+        );
+        assert_eq!(
+            SystemInfo::from_line("+CPSI: LTE CAT-M1,Online", &now).unwrap(),
+            SystemInfo {
+                operation_mode: OperationMode::Online,
+                system_mode_parameters: SystemModeParameters::LteCatM1(LteModeParameters::default()),
+            }
+        );
     }
 }

@@ -20,6 +20,10 @@ impl Default for MncLen {
 pub struct Mnc(u16, MncLen);
 
 impl Mcc {
+    pub(crate) const fn new(num: u16) -> Self {
+        Self(num)
+    }
+
     pub const fn from_str(digits: &str) -> Option<Self> {
         match digits.len() {
             3 => {
@@ -51,6 +55,14 @@ impl defmt::Format for Mcc {
 }
 
 impl Mnc {
+    pub(crate) const fn new_short(num: u16) -> Self {
+        Self(num, MncLen::Short)
+    }
+
+    pub(crate) const fn new_long(num: u16) -> Self {
+        Self(num, MncLen::Long)
+    }
+
     pub const fn from_str(digits: &str) -> Option<Self> {
         match digits.len() {
             3 => {
