@@ -1,4 +1,4 @@
-use core::{future::Future, str::from_utf8};
+use core::future::Future;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
@@ -28,8 +28,6 @@ use crate::{
     },
     read::ModemReader,
 };
-
-pub const PUMP_COUNT: usize = 3;
 
 /// Defines work that should be done for a communication task to
 /// run the modem.
@@ -61,7 +59,7 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
     pub(crate) local_time: watch::Sender<'context, M, unsolicited::Psuttz, 1>,
-    pub(crate) ready: watch::Sender<'context, M, ReadyState, 1>,
+    pub(crate) ready: watch::Sender<'context, M, ReadyState, 2>,
     pub(crate) registration_events: &'context StateSignal<M, NetworkRegistration>,
     pub(crate) sms_indices: Sender<'context, M, unsolicited::NewSmsIndex, 5>,
     pub(crate) pdp_status: watch::Sender<'context, M, AppNetworkMap, 1>,
@@ -98,7 +96,7 @@ where
         //  the Rx state.
         let (line, read_instant) = match select(
             self.reader.read_line(),
-            self.active_signal.wait_for_not(PowerState::On),
+            self.active_signal.wait_for_changed_not(PowerState::On),
         )
         .await
         {
@@ -194,13 +192,6 @@ where
                         return Ok(());
                     }
                     Urc::PowerDown(PowerDown::Normal) => {
-                        // Normal power down isn't an unsolicited response but
-                        //  it's parsed here since other PowerDown messages are
-                        let mut buf =
-                            with_timeout(Duration::from_secs(10), self.generic_response.send())
-                                .await?;
-                        *buf = ResponseCode::PowerDown(PowerDown::Normal);
-                        buf.send_done();
                         self.ready.send(ReadyState::PowerDown);
                         return Ok(());
                     }
@@ -335,46 +326,56 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
         let mut io = Some(self.io.build());
         let (mut reader, mut writer) = RW::IO::split(&mut io);
 
-        loop {
-            let mut tx_buf = [0u8; 256];
-            let mut rx_buf = [0u8; 256];
-
-            match select3(
-                self.tx.read(&mut tx_buf),
-                reader.read(&mut rx_buf),
-                self.active_signal.listen(),
-            )
-            .await
-            {
-                Either3::First(bytes) => {
-                    writer
-                        .write_all(&tx_buf[..bytes])
-                        .await
-                        .map_err(|_| Error::Serial)?;
-                    writer.flush().await.map_err(|_| Error::Serial)?;
-                }
-                Either3::Second(result) => {
-                    let bytes = result.map_err(|_| Error::Serial)?;
-
-                    match from_utf8(&rx_buf[..bytes]) {
-                        Ok(line) => log::trace!("BYTES READ {:?}", line),
-                        Err(_) => log::trace!("READ INVALID {:?}", &rx_buf[..bytes]),
-                    }
-
+        match select3(
+            async {
+                let mut rx_buf = [0u8; 256];
+                log::trace!("Begin Rx");
+                loop {
+                    let bytes = match reader.read(&mut rx_buf).await {
+                        Ok(0) => break Err(Error::Serial),
+                        Ok(bytes) => bytes,
+                        Err(_) => break Err(Error::Serial),
+                    };
+                    log::trace!("Rx {:?}", &rx_buf[..bytes]);
                     self.rx.write_all(&rx_buf[..bytes]).await;
                 }
-                Either3::Third(result) => {
-                    self.power_state = result;
-                    if self.power_state == PowerState::Off {
-                        break Ok(());
-                    }
+            },
+            async {
+                let mut tx_buf = [0u8; 256];
+                log::trace!("Begin Tx");
+                loop {
+                    let bytes = self.tx.read(&mut tx_buf).await;
+                    log::trace!("Tx {:?}", &tx_buf[..bytes]);
+                    match writer
+                        .write_all(&tx_buf[..bytes])
+                        .await {
+                        Ok(()) => {},
+                        Err(_) => break Err(Error::Serial),
+                    };
                 }
+            },
+            self.active_signal.wait_for(PowerState::Off),
+        )
+        .await
+        {
+            Either3::First(result) => {
+                writer.flush().await.map_err(|_| Error::Serial)?;
+                result?;
+            }
+            Either3::Second(result) => {
+                result?;
+            }
+            Either3::Third(()) => {
+                log::trace!("Pwr {:?}", &PowerState::Off);
+                self.power_state = PowerState::Off;
+                writer.flush().await.map_err(|_| Error::Serial)?;
             }
         }
+        Ok(())
     }
 
     pub async fn low_power_pump(&mut self) {
-        self.power_state = self.active_signal.listen().await;
+        self.power_state = self.active_signal.wait_for_not(PowerState::Off).await;
     }
 }
 

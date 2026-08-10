@@ -62,7 +62,7 @@ pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) drop_channel: DropChannel<M>,
     pub(crate) sms_indices: Channel<M, NewSmsIndex, 5>,
     pub(crate) sms_state: Signal<M, SmsState>,
-    pub(crate) ready: Watch<M, ReadyState, 1>,
+    pub(crate) ready: Watch<M, ReadyState, 2>,
     pub(crate) pdp_status: Watch<M, AppNetworkMap, 1>,
     pub(crate) local_time: Watch<M, Psuttz, 1>,
     pub(crate) registration_events: StateSignal<M, NetworkRegistration>,

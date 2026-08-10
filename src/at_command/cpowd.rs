@@ -1,4 +1,4 @@
-use super::{AtRequest, unsolicited};
+use super::{AtRequest};
 
 /// AT+CPOWD=...
 #[derive(Debug)]
@@ -13,7 +13,8 @@ pub enum Mode {
 }
 
 impl AtRequest for PowerDown {
-    type Response = unsolicited::PowerDown;
+    // Check the status with [crate::modem::Modem::ready()]
+    type Response = ();
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let arg = match self.0 {
             Mode::Urgent => '0',

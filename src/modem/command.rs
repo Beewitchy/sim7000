@@ -404,6 +404,12 @@ impl<
     }
 }
 
+impl<M: RawMutex> ExpectResponse<M> for () {
+    async fn expect(_: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+        Ok(())
+    }
+}
+
 impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usize>
     ExpectResponse<M> for Seq<T, N, DoneT>
 {

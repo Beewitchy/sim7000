@@ -210,14 +210,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         let Some(mut ready) = self.context.ready.receiver() else {
             return Err(Error::InvalidContext);
         };
-        if matches!(self.power.state(), PowerState::Off) {
-            self.active_signal.clear();
-            with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
-        }
-        self.active_signal.broadcast(PowerState::On);
         for attempt in 0..max_tries {
+            if matches!(self.power.state(), PowerState::Off)
+            || ready.try_get_and(|s| *s == ReadyState::PowerDown).is_some()
+            {
+                self.active_signal.broadcast(PowerState::On);
+                with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+            }
             if with_timeout(
-                Duration::from_secs(2 + attempt * 3),
+                Duration::from_secs(10 + attempt * 10),
                 ready.get_and(ReadyState::is_ready),
             )
             .await
@@ -228,21 +229,27 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             // It's possible the RDY message from the modem was missed--
             //  try sending an AT to get a response. I believe a non-error
             //  response indicates the modem is up
-            if let Ok(mut commands) = self.commands.try_lock() {
-                if commands.run(At).await.is_ok() {
-                    return Ok(());
-                }
-            }
+            // if let Ok(mut commands) = self.commands.try_lock() {
+            //     if commands.run(At).await.is_ok() {
+            //         return Ok(());
+            //     }
+            // }
             // Deactivating and rebooting seems to be often not needed,
             //  so only try it every other attempt
             if attempt % 2 != 0 {
-                self.deactivate().await?;
-                with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
+                // self.deactivate().await?;
+                self.async_drop().await?;
+                if !matches!(self.power.state(), PowerState::Off) {
+                    with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
+                        .await
+                        .map_err(Error::from)?;
+                    embassy_time::Timer::after_secs(30).await;
+                }
             }
         }
         match ready.try_get_and(ReadyState::is_ready) {
             None => Err(Error::Timeout),
-            Some(_) => Ok(())
+            Some(_) => Ok(()),
         }
     }
 
@@ -253,7 +260,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ) -> Result<(), Error> {
         log::info!("initializing modem");
 
-        self.wait_for_ready(3).await?;
+        self.wait_for_ready(4).await?;
 
         let mut commands = self.commands.lock().await;
 
@@ -345,6 +352,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         drop(commands);
 
         Ok(())
+    }
+
+    pub fn ready(&self) -> ReadyState {
+        self.context.ready.try_get().unwrap_or_default()
     }
 
     pub fn set_apn(&mut self, apn: Option<heapless::String<63>>) {
@@ -601,11 +612,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
     pub async fn deactivate(&mut self) -> Result<(), Error> {
         if !matches!(self.power.state(), PowerState::Off)
-            && self.context.ready.try_get_and(ReadyState::is_ready).is_some()
+            && self
+                .context
+                .ready
+                .try_get_and(ReadyState::is_ready)
+                .is_some()
         {
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
-            // result ignored because power-off should proceed regardless
+            let ready = self.context.ready.receiver();
             match commands
                 .run_with_timeout(
                     Some(Duration::from_secs(10)),
@@ -613,8 +628,23 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 )
                 .await
             {
-                Ok(_power_down) => {
-                    log::debug!("Modem powered down, {:?}", _power_down);
+                Ok(()) => {
+                    if let Some(mut ready) = ready {
+                        match embassy_time::with_timeout(
+                            Duration::from_secs(30),
+                            ready.get_and(|s| *s == ReadyState::PowerDown),
+                        )
+                        .await
+                        {
+                            Ok(ReadyState::PowerDown) => {
+                                log::debug!("Modem powered down");
+                            }
+                            Err(embassy_time::TimeoutError) => {
+                                log::warn!("Power down command didn't complete, timeout");
+                            }
+                            Ok(_) => unreachable!(),
+                        }
+                    }
                 }
                 Err(_err) => {
                     log::warn!("Power down command didn't complete, {:?}", _err);

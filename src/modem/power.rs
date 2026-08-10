@@ -88,33 +88,44 @@ impl PowerSignalBroadcaster<'_> {
 }
 
 impl<M: RawMutex> PowerSignalListener<'_, M> {
+    #[inline]
     pub async fn wait_for(&mut self, state: PowerState) {
-        while self.listen().await != state {}
+        self.receiver.get_and(move |new_state| *new_state == state).await;
     }
 
+    #[inline]
+    pub async fn wait_for_changed(&mut self, state: PowerState) {
+        self.receiver.changed_and(move |new_state| *new_state == state).await;
+    }
+
+    #[inline]
     pub async fn wait_for_not(&mut self, state: PowerState) -> PowerState {
-        loop {
-            let new_state = self.listen().await;
-            if new_state != state {
-                return new_state;
-            }
-        }
+        self.receiver.get_and(move |new_state| *new_state != state).await
     }
 
+    #[inline]
+    pub async fn wait_for_changed_not(&mut self, state: PowerState) -> PowerState {
+        self.receiver.changed_and(move |new_state| *new_state != state).await
+    }
+
+    #[inline]
     pub async fn listen(&mut self) -> PowerState {
         self.receiver.changed().await
     }
 
+    #[inline]
     pub fn try_read_current(&mut self) -> Option<PowerState> {
         self.receiver.try_get()
     }
 }
 
 impl<M: RawMutex> PowerSignalReader<'_, M> {
+    #[inline]
     pub fn try_read_current(&mut self) -> Option<PowerState> {
         self.receiver.try_get()
     }
 
+    #[inline]
     pub fn try_read_changed(&mut self) -> Option<PowerState> {
         self.receiver.try_changed()
     }
