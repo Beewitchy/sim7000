@@ -218,7 +218,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
             }
             if with_timeout(
-                Duration::from_secs(10 + attempt * 10),
+                Duration::from_secs(30 + attempt * 10),
                 ready.get_and(ReadyState::is_ready),
             )
             .await
@@ -243,8 +243,13 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     with_timeout(MODEM_POWER_TIMEOUT, self.power.disable())
                         .await
                         .map_err(Error::from)?;
-                    embassy_time::Timer::after_secs(30).await;
+                    let _ = embassy_time::with_timeout(
+                            MODEM_POWER_TIMEOUT,
+                            ready.get_and(|s| *s == ReadyState::PowerDown),
+                        )
+                        .await;
                 }
+                embassy_time::Timer::after_secs(5).await;
             }
         }
         match ready.try_get_and(ReadyState::is_ready) {
@@ -623,7 +628,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             let ready = self.context.ready.receiver();
             match commands
                 .run_with_timeout(
-                    Some(Duration::from_secs(10)),
+                    Some(Duration::from_secs(35)),
                     cpowd::PowerDown(cpowd::Mode::Normal),
                 )
                 .await
@@ -631,7 +636,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Ok(()) => {
                     if let Some(mut ready) = ready {
                         match embassy_time::with_timeout(
-                            Duration::from_secs(30),
+                            Duration::from_secs(35),
                             ready.get_and(|s| *s == ReadyState::PowerDown),
                         )
                         .await
