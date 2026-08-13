@@ -108,13 +108,19 @@ macro_rules! try_retry {
     }};
 }
 
+/// This indicates the state of the modem as indicated
+/// various unsolicited messages
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadyState {
+    /// Modem has powered down
     #[default]
-    None,
     PowerDown,
+    /// Modem has powered up
     Ready,
+    /// Sim card is detected
+    SimReady,
+    /// SMS messaging is set up
     SmsReady,
 }
 
@@ -122,8 +128,8 @@ impl ReadyState {
     #[inline]
     pub const fn is_ready(&self) -> bool {
         match self {
-            Self::None | Self::PowerDown => false,
-            Self::Ready | Self::SmsReady => true,
+            Self::PowerDown => false,
+            Self::Ready | Self::SimReady | Self::SmsReady => true,
         }
     }
 }
@@ -212,7 +218,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         };
         for attempt in 0..max_tries {
             if matches!(self.power.state(), PowerState::Off)
-            || ready.try_get_and(|s| *s == ReadyState::PowerDown).is_some()
+                || ready.try_get_and(|s| *s == ReadyState::PowerDown).is_some()
             {
                 self.active_signal.broadcast(PowerState::On);
                 with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
@@ -234,10 +240,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                         .await
                         .map_err(Error::from)?;
                     let _ = embassy_time::with_timeout(
-                            MODEM_POWER_TIMEOUT,
-                            ready.get_and(|s| *s == ReadyState::PowerDown),
-                        )
-                        .await;
+                        MODEM_POWER_TIMEOUT,
+                        ready.get_and(|s| *s == ReadyState::PowerDown),
+                    )
+                    .await;
                 }
             }
             embassy_time::Timer::after_secs(5).await;
@@ -972,7 +978,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn sync_ntp(
         &mut self,
         ntp_server: &str,
-        timezone: u16,
+        timezone: impl cclk::TimeZoneOffset,
     ) -> Result<cntp::NetworkTime, Error> {
         self.async_drop().await?;
 
@@ -1005,10 +1011,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         commands.run(cntpcid::SetGprsBearerProfileId(1)).await?;
 
+        let timezone_quarter_hours = timezone
+            .standard_offset_from_utc()
+            .to_quarter_hours_half_standard_range();
+
         commands
             .run(cntp::SynchronizeNetworkTime {
                 ntp_server: ntp_server.try_into().unwrap_or_default(),
-                timezone,
+                timezone_quarter_hours,
                 cid: 1,
             })
             .await?;

@@ -88,7 +88,7 @@ where
             drop_channel: DropChannel::new(),
             sms_indices: Channel::new(),
             sms_state: Signal::new(),
-            ready: Watch::new_with(ReadyState::None),
+            ready: Watch::new_with(ReadyState::PowerDown),
             pdp_status: Watch::new(),
             local_time: Watch::new(),
             registration_events: StateSignal::new(NetworkRegistration {

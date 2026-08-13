@@ -8,7 +8,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseC
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SynchronizeNetworkTime {
     pub ntp_server: String<64>,
-    pub timezone: u16,
+    pub timezone_quarter_hours: i8,
     pub cid: u8,
 }
 
@@ -24,7 +24,7 @@ impl AtRequest for SynchronizeNetworkTime {
             buf,
             "AT+CNTP=\"{}\",{},{}\r",
             self.ntp_server.as_str(),
-            self.timezone,
+            self.timezone_quarter_hours,
             self.cid
         )
     }

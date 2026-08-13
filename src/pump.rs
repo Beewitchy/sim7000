@@ -22,10 +22,7 @@ use crate::{
         },
     },
     log,
-    modem::{
-        AppNetworkMap, RawAtCommand, ReadyState, TcpContext,
-        power::{PowerSignalListener},
-    },
+    modem::{AppNetworkMap, RawAtCommand, ReadyState, TcpContext, power::PowerSignalListener},
     read::ModemReader,
 };
 
@@ -201,6 +198,10 @@ where
                         return Ok(());
                     }
                     Urc::CPin(cpin) => {
+                        match cpin {
+                            unsolicited::CPin::Ready => self.ready.send(ReadyState::SimReady),
+                            unsolicited::CPin::NotInserted | unsolicited::CPin::NotReady => {}
+                        }
                         // This can actually be a solicited response but without a
                         // stateful parser there's no way to know, so just assume
                         // it is and put it in the response queue
@@ -218,7 +219,7 @@ where
                     Urc::CFun(cfun) => {
                         match cfun.0 {
                             cfun::Functionality::Full => self.ready.send(ReadyState::Ready),
-                            _ => self.ready.send(ReadyState::None),
+                            _ => {}
                         }
                         return Ok(());
                     }
@@ -346,10 +347,8 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
                 loop {
                     let bytes = self.tx.read(&mut tx_buf).await;
                     log::trace!("Tx {:?}", &tx_buf[..bytes]);
-                    match writer
-                        .write_all(&tx_buf[..bytes])
-                        .await {
-                        Ok(()) => {},
+                    match writer.write_all(&tx_buf[..bytes]).await {
+                        Ok(()) => {}
                         Err(_) => break Err(Error::Serial),
                     };
                 }

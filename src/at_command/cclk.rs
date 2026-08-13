@@ -74,46 +74,266 @@ pub trait FromCclkStr: core::fmt::Debug + Sized {
     fn from_cclk_str(s: &str) -> Result<(Self, &str), AtParseErr>;
 }
 
+/// Intentionally opaque time zone offset unit.
+///
+/// Use the associated functions to convert to
+/// the specific unit you need.
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OffsetUnit {
+    quarters: i8,
+}
+
+impl Default for OffsetUnit {
+    #[inline]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl OffsetUnit {
+    /// Returns the zero value for the offset
+    #[inline]
+    pub const fn zero() -> Self {
+        Self { quarters: 0 }
+    }
+
+    /// Create an offset from quarter hours, if they
+    /// are in the valid range for the time zone offset
+    /// unit
+    #[inline]
+    pub const fn checked_from_quarter_hours(quarters: i8) -> Option<Self> {
+        if quarters > -24 * 4 && quarters < 24 * 4 {
+            Some(Self { quarters })
+        } else {
+            None
+        }
+    }
+
+    /// Create an offset from hours, if they are in
+    /// the valid range for the time zone offset unit
+    #[inline]
+    pub const fn checked_from_hours(hours: i8) -> Option<Self> {
+        if hours > -24 && hours < 24 {
+            Some(Self {
+                quarters: hours * 4,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Create an offset from hours, if they are in
+    /// the valid range for the time zone offset unit
+    #[inline]
+    pub const fn checked_from_hours_unsigned(hours: u8) -> Option<Self> {
+        if hours < 24 {
+            Some(Self {
+                quarters: hours as i8 * 4,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Create an offset from seconds, if they are
+    /// in the valid range for the time zone offset
+    /// unit
+    #[inline]
+    pub const fn checked_from_seconds(seconds: i32) -> Option<Self> {
+        Self::checked_from_quarter_hours((seconds / (15 * 60)) as i8)
+    }
+
+    /// Convert the offset to seconds
+    #[inline]
+    pub const fn to_seconds(&self) -> i32 {
+        self.quarters as i32 * 15 * 60
+    }
+
+    /// Convert the offset to hours
+    #[inline]
+    pub const fn to_hours(&self) -> i8 {
+        self.quarters * 4
+    }
+
+    /// Convert the offset to quarter hours.
+    /// The range is -95..=95
+    #[inline]
+    pub const fn to_quarter_hours_full_range(&self) -> i8 {
+        self.quarters
+    }
+
+    /// Convert the offset to quarter hours in the
+    /// standard (12 hour) range, wrapping at
+    /// -12 hours and 12.25 hours (which each become
+    /// 0), resulting in a range of -47..=48 quarter
+    /// hours
+    #[inline]
+    pub const fn to_quarter_hours_half_standard_range(&self) -> i8 {
+        if self.quarters <= -12 * 4 {
+            self.quarters + (24 * 4)
+        } else if self.quarters > 12 * 4 {
+            self.quarters - (24 * 4)
+        } else {
+            self.quarters
+        }
+    }
+
+    /// Convert the offset to quarter hours in the
+    /// DST-included (13 hour) range, wrapping at
+    /// -12 hours and 13.25 hours (which each become
+    /// 0), resulting in a range of -47..=52 quarter
+    /// hours
+    #[inline]
+    pub const fn to_quarter_hours_half_dst_range(&self) -> i8 {
+        if self.quarters <= -12 * 4 {
+            self.quarters + (24 * 4)
+        } else if self.quarters > 13 * 4 {
+            self.quarters - (24 * 4)
+        } else {
+            self.quarters
+        }
+    }
+}
+
+/// Represents time-zone data for a specific time
+pub trait TimeZoneOffset {
+    /// The difference between standard (non-DST)
+    /// for this timezone and UTC
+    fn standard_offset_from_utc(&self) -> OffsetUnit;
+    /// The difference between
+    fn dst_offset_from_standard(&self) -> OffsetUnit;
+}
+
+impl<T> TimeZoneOffset for &T where T: Sized + TimeZoneOffset {
+    fn standard_offset_from_utc(&self) -> OffsetUnit {
+        T::standard_offset_from_utc(self)
+    }
+
+    fn dst_offset_from_standard(&self) -> OffsetUnit {
+        T::dst_offset_from_standard(self)
+    }
+}
+
 #[cfg(feature = "chrono")]
 pub mod types {
+    use super::{OffsetUnit, TimeZoneOffset};
+
     /// Common type alias for UTC times parsed from responses
     pub type UtcDateTime = chrono::DateTime<chrono::Utc>;
     /// Common type alias for local tz times parsed from responses
     pub type LocalDateTime = chrono::DateTime<chrono::FixedOffset>;
-    /// Common type alias for timezone offset parsed from responses
-    pub type LocalTimeOffset = (chrono::FixedOffset, u8);
+
+    /// Type for timezone offset parsed from responses
+    #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct LocalTimeOffset(pub(super) chrono::FixedOffset, pub(super) OffsetUnit);
+
+    impl TimeZoneOffset for LocalTimeOffset {
+        #[inline]
+        fn standard_offset_from_utc(&self) -> OffsetUnit {
+            OffsetUnit::checked_from_seconds(self.0.local_minus_utc()).unwrap_or_default()
+        }
+
+        #[inline]
+        fn dst_offset_from_standard(&self) -> OffsetUnit {
+            self.1
+        }
+    }
+
+    impl chrono::Offset for LocalTimeOffset {
+        #[inline]
+        fn fix(&self) -> chrono::FixedOffset {
+            chrono::FixedOffset::east_opt(self.0.local_minus_utc() + self.1.to_seconds())
+                .unwrap_or(self.0)
+        }
+    }
+
+    // This is essentially just FixedOffset but with separated DST
+    impl chrono::TimeZone for LocalTimeOffset {
+        type Offset = LocalTimeOffset;
+
+        #[inline]
+        fn from_offset(offset: &Self::Offset) -> Self {
+            *offset
+        }
+
+        #[inline]
+        fn offset_from_local_date(
+            &self,
+            _: &chrono::prelude::NaiveDate,
+        ) -> chrono::MappedLocalTime<Self::Offset> {
+            chrono::MappedLocalTime::Single(*self)
+        }
+
+        #[inline]
+        fn offset_from_local_datetime(
+            &self,
+            _: &chrono::prelude::NaiveDateTime,
+        ) -> chrono::MappedLocalTime<Self::Offset> {
+            chrono::MappedLocalTime::Single(*self)
+        }
+
+        #[inline]
+        fn offset_from_utc_date(&self, _: &chrono::prelude::NaiveDate) -> Self::Offset {
+            *self
+        }
+
+        #[inline]
+        fn offset_from_utc_datetime(&self, _: &chrono::prelude::NaiveDateTime) -> Self::Offset {
+            *self
+        }
+    }
 
     const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset =
-        (chrono::FixedOffset::east_opt(0).unwrap(), 0);
+        LocalTimeOffset(chrono::FixedOffset::east_opt(0).unwrap(), OffsetUnit::zero());
 
     pub fn set_dst(
         tz_offset: Option<LocalTimeOffset>,
         dst: super::super::unsolicited::Dst,
     ) -> LocalTimeOffset {
-        (
+        LocalTimeOffset(
             tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0,
-            dst.dst_quater_hours,
+            dst.dst_offset,
         )
     }
 }
 #[cfg(not(feature = "chrono"))]
 pub mod types {
+    use super::{OffsetUnit, TimeZoneOffset};
+
     /// Common type alias for UTC times parsed from responses
     pub type UtcDateTime = super::super::unsolicited::DateTime;
     /// Common type alias for local tz times parsed from responses
     pub type LocalDateTime = super::super::unsolicited::DateTime;
-    /// Common type alias for timezone offset parsed from responses
-    pub type LocalTimeOffset = (i8, u8);
 
-    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset = (0, 0);
+    /// Type for timezone offset parsed from responses
+    #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct LocalTimeOffset(pub(super) OffsetUnit, pub(super) OffsetUnit);
+
+    impl TimeZoneOffset for LocalTimeOffset {
+        #[inline]
+        fn standard_offset_from_utc(&self) -> OffsetUnit {
+            self.0
+        }
+
+        #[inline]
+        fn dst_offset_from_standard(&self) -> OffsetUnit {
+            self.1
+        }
+    }
+
+    const DEFAULT_LOCAL_TIME_OFFSET: LocalTimeOffset =
+        LocalTimeOffset(OffsetUnit::zero(), OffsetUnit::zero());
 
     pub fn set_dst(
         tz_offset: Option<LocalTimeOffset>,
         dst: super::super::unsolicited::Dst,
     ) -> LocalTimeOffset {
-        (
+        LocalTimeOffset(
             tz_offset.unwrap_or(DEFAULT_LOCAL_TIME_OFFSET).0,
-            dst.dst_quater_hours,
+            dst.dst_offset,
         )
     }
 }
@@ -349,18 +569,18 @@ pub fn parse_timezone(s: &str) -> Result<types::LocalTimeOffset, AtParseErr> {
         };
         crate::log::debug!("Got timezone {:?}.", timezone);
         let timezone = timezone.strip_circumfix('"', '"').unwrap_or(timezone);
-        let dst = i32::from_str_radix(remain, 10).unwrap_or(0);
-        let dst_quater_hours = dst.checked_mul(4).ok_or("DST offset is too large")?;
-        let tzoff_quater_hours = i32::from_str_radix(timezone, 10)?;
+        let tzoff_quater_hours = i8::from_str_radix(timezone, 10)?;
+        let dst = i8::from_str_radix(remain, 10).unwrap_or(0);
+        let dst = OffsetUnit::checked_from_hours(dst).ok_or("DST offset is too large")?;
         let tzoff_seconds = (15i32 * 60)
             .checked_mul(
                 tzoff_quater_hours
-                    .checked_sub(dst_quater_hours)
-                    .ok_or("DST offset is larger than TZ offset")?,
+                    .checked_sub(dst.to_quarter_hours_full_range())
+                    .ok_or("TZ offset is expected to include DST offset, but DST offset was larger than TZ offset")? as i32,
             )
             .ok_or("TZ offset is too large")?;
         chrono::FixedOffset::east_opt(tzoff_seconds)
-            .map(|tz_off| (tz_off, dst_quater_hours as u8))
+            .map(|tz_off| types::LocalTimeOffset(tz_off, dst))
             .ok_or("TZ offset is invalid".into())
     }
     #[cfg(not(feature = "chrono"))]
