@@ -1,7 +1,7 @@
 use core::{
     fmt::Debug, marker::PhantomData, num::{ParseFloatError, ParseIntError}
 };
-use embassy_time::Instant;
+use embassy_time::{Instant, Duration};
 
 pub mod generic_response;
 pub mod unsolicited;
@@ -123,13 +123,20 @@ use self::{
     cgnscold::XtraStatus, cgnscpy::CopyResponse, cntp::NetworkTime, httptofs::DownloadInfo,
 };
 
-/// Results of parsing
+/// This error type is reported by [AtParseLine] (and related
+/// parsers) when no value is produced.
 #[derive(Clone, Copy, Debug)]
 pub enum AtParseErr {
-    /// Parsing failed for identified data
-    Parsing(&'static str),
-    /// The parsed data may be valid but of a different response type
+    /// The parsed data appears to be a different type than what
+    /// this parser is for. This may be not-an-error if the data
+    /// type wasn't known.
     Mismatch,
+    /// The parser failed to produce a value.
+    ///
+    /// This will be reported only when the parsed data **did**
+    /// appear to match the type for this parser. Otherwise,
+    /// [Self::Mismatch] should be reported.
+    Parsing(&'static str),
 }
 
 impl Default for AtParseErr {
@@ -146,12 +153,37 @@ pub(crate) trait AtParseLine: Sized {
 pub trait AtRequest: Debug + defmt::Format {
     type Response;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
+    fn timeout(&self) -> Option<Duration> {
+        Self::default_timeout()
+    }
+    fn default_timeout() -> Option<Duration> {
+        None
+    }
 }
 
+/// Defines a request can be encoded and set to the modem,
+/// along with the expected response type.
 #[cfg(not(feature = "defmt"))]
 pub trait AtRequest: Debug {
+    /// The expected response type for this request
     type Response;
+    /// Encode the request to bytes in the format that the
+    /// modem expects
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
+    /// Optional per-instance timeout for this request.
+    ///
+    /// If this type doesn't need a per-instance timeout,
+    /// [Self::default_timeout()] can be implemented instead
+    /// to provide a timeout for all instances.
+    fn timeout(&self) -> Option<Duration> {
+        Self::default_timeout()
+    }
+    /// The default timeout for all instances of this type.
+    /// Will be overridden by the value returned by
+    /// [Self::timeout()] if that is implemented.
+    fn default_timeout() -> Option<Duration> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -328,6 +360,9 @@ pub trait AtResponse: Sized {
     #[cfg(any(feature = "defmt", feature = "log"))]
     const RESPONSE_KIND: ResponseCodeKind;
     fn from_generic(code: &mut ResponseCode) -> Option<&mut Self>;
+    fn default_timeout() -> Option<Duration> {
+        None
+    }
 }
 
 /// Sim7000 AT-command response code
@@ -422,9 +457,10 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, instant, ResponseCode::SmsMessageFormat))
             .or_else(parse(line, instant, ResponseCode::MessageReference))
             // .or_else(parse(line, instant, ResponseCode::SmsInfo))
-            // Like the Imei, this one is weird and can't be unambiguously parsed (since it is human input), with the current setup.
-            // Anyways, let's have this at the bottom, that way we can catch any other
-            // response codes before this one.
+            // Like the Imei, this one is weird and can't be unambiguously
+            // parsed (since it is human input), with the current setup.
+            // Anyways, let's have this at the bottom, that way we can catch
+            // any other response codes before this one.
             .or_else(parse(line, instant, ResponseCode::SmsMessage))
             .unwrap_or(Err(AtParseErr::Mismatch))
     }

@@ -26,12 +26,15 @@ heapless = "0.9"
 log = { version = "0.4", optional = true }
 kinded = { version = "0.5", optional = true }
 bitflags = "2.13"
+bon = { version = "3", default-features = false }
 
 [features]
-default = ["log", "chrono"]
+default = ["log"]
 log = ["dep:log", "dep:kinded"]
 defmt = ["dep:defmt", "dep:kinded", "embassy-time/defmt", "embassy-sync/defmt", "heapless/defmt", "chrono?/defmt"]
 chrono = ["dep:chrono"]
+nightly = ["heapless/nightly"]
+portable-atomic = ["heapless/portable-atomic"]
 
 [dev-dependencies]
 embassy-executor = { version = "0.10.0", features = ["platform-std", "executor-thread"] }

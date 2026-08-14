@@ -1,5 +1,6 @@
 use embassy_time::Instant;
 
+use crate::parse_hex_or_dec::ParseHexOrDec as _;
 use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CCLK
@@ -414,8 +415,8 @@ impl FromCclkStr for chrono::DateTime<chrono::FixedOffset> {
         .map_err(map_chrono_err)?;
         if remain.starts_with(&['+', '-']) {
             if let Some((tzoff, remain)) = remain.split_at_checked(3) {
-                if let Ok(tzoff_quater_hours) = i64::from_str_radix(tzoff, 10) {
-                    let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quater_hours);
+                if let Ok(tzoff_quarter_hours) = i64::from_str_radix(tzoff, 10) {
+                    let tzoff_seconds = (15i64 * 60).saturating_mul(tzoff_quarter_hours);
                     let _ = parsed.set_offset(tzoff_seconds);
                     let dt_local = parsed.to_datetime().map_err(map_chrono_err)?;
                     return Ok((dt_local, remain));
@@ -531,17 +532,17 @@ pub fn parse_psuttz_time(
         } else {
             (',', ',')
         };
-        let (year, s) = s.split_once(date_delim)?;
+        let (year, s) = s.split_once(date_delim).ok_or("Missing year")?;
         let year = year.parse().map_err(|_| "Invalid character")?;
-        let (month, s) = s.split_once(date_delim)?;
+        let (month, s) = s.split_once(date_delim).ok_or("Missing month")?;
         let month = month.parse().map_err(|_| "Invalid character")?;
-        let (day, s) = s.split_once(',')?;
+        let (day, s) = s.split_once(',').ok_or("Missing day")?;
         let day = day.parse().map_err(|_| "Invalid character")?;
-        let (hour, s) = s.split_once(time_delim)?;
+        let (hour, s) = s.split_once(time_delim).ok_or("Missing hour")?;
         let hour = hour.parse().map_err(|_| "Invalid character")?;
-        let (minute, s) = s.split_once(time_delim)?;
+        let (minute, s) = s.split_once(time_delim).ok_or("Missing minute")?;
         let minute = minute.parse().map_err(|_| "Invalid character")?;
-        let (second, s) = s.split_once(&',')?;
+        let (second, s) = s.split_once(',').ok_or("Missing second")?;
         let second = second.parse().map_err(|_| "Invalid character")?;
         Ok((
             super::unsolicited::DateTime {
@@ -551,8 +552,9 @@ pub fn parse_psuttz_time(
                 hour,
                 minute,
                 second,
+                tz_off: 0,
             },
-            parse_timezone(s),
+            Some(parse_timezone(s)?),
         ))
     }
 }
@@ -560,32 +562,46 @@ pub fn parse_psuttz_time(
 /// Parse the quoted "timezone" argument format used by *PSUTTZ and +CTZV message data.
 /// Will also try to parse a dst value if there is any remaining arguments in the string
 pub fn parse_timezone(s: &str) -> Result<types::LocalTimeOffset, AtParseErr> {
+    let (timezone, remain) = if let Some((timezone, remain)) = s.split_once(',') {
+        (timezone, remain)
+    } else {
+        (s, "")
+    };
+    // ellie (14.08.2026) - the timezone argument is printed as a string
+    // which makes me think it can sometimes be other more complicated
+    // formats, but in practice i've only ever seen a decimal number here
+    let timezone = timezone.strip_circumfix('"', '"').ok_or("Time zone argument should be string")?;
+    let tzoff_quarter_hours = i8::from_str_radix(timezone, 10)?;
+    // Dst arg is optional
+    let dst = if let Ok(dst_hours) = i8::from_str_radix(remain, 10) {
+        // Even though the arg itself is optional, if the arg is
+        // present then it should parse properly, so failure is an
+        // error:
+        Some(OffsetUnit::checked_from_hours(dst_hours).ok_or("DST offset is too large")?)
+    } else {
+        None
+    };
+    let tzoff_quarter_hours = if let Some(dst) = dst {
+        tzoff_quarter_hours
+            .checked_sub(dst.to_quarter_hours_full_range())
+            .ok_or("Local time zone offset is expected to include DST offset, but the parsed DST offset was larger than the parsed local time zone offset")?
+    } else {
+        tzoff_quarter_hours
+    };
     #[cfg(feature = "chrono")]
     {
-        let (timezone, remain) = if let Some((timezone, remain)) = s.split_once(',') {
-            (timezone, remain)
-        } else {
-            (s, "")
-        };
-        crate::log::debug!("Got timezone {:?}.", timezone);
-        let timezone = timezone.strip_circumfix('"', '"').unwrap_or(timezone);
-        let tzoff_quater_hours = i8::from_str_radix(timezone, 10)?;
-        let dst = i8::from_str_radix(remain, 10).unwrap_or(0);
-        let dst = OffsetUnit::checked_from_hours(dst).ok_or("DST offset is too large")?;
         let tzoff_seconds = (15i32 * 60)
-            .checked_mul(
-                tzoff_quater_hours
-                    .checked_sub(dst.to_quarter_hours_full_range())
-                    .ok_or("TZ offset is expected to include DST offset, but DST offset was larger than TZ offset")? as i32,
-            )
-            .ok_or("TZ offset is too large")?;
+            .checked_mul(tzoff_quarter_hours as i32)
+            .ok_or("Local time zone offset is too large")?;
         chrono::FixedOffset::east_opt(tzoff_seconds)
-            .map(|tz_off| types::LocalTimeOffset(tz_off, dst))
-            .ok_or("TZ offset is invalid".into())
+            .map(|tz_off| types::LocalTimeOffset(tz_off, dst.unwrap_or_default()))
+            .ok_or("Local time zone offset is invalid".into())
     }
     #[cfg(not(feature = "chrono"))]
     {
-        None
+        let local_tz = OffsetUnit::checked_from_quarter_hours(tzoff_quarter_hours)
+            .ok_or("Local time zone offset is invalid")?;
+        Ok(types::LocalTimeOffset(local_tz, dst.unwrap_or_default()))
     }
 }
 
@@ -629,11 +645,7 @@ pub fn parse_sgnscmd_time(
             .into_iter(),
         )
         .ok()?;
-        let timestamp_millis = if let Some(timestamp) = timestamp.strip_prefix("0x") {
-            i64::from_str_radix(timestamp, 16).ok()?
-        } else {
-            i64::from_str_radix(timestamp, 10).ok()?
-        };
+        let timestamp_millis = i64::parse_hex_or_dec(timestamp).ok()?;
         let timestamp = timestamp_millis / 1000;
         let nanosecond = (timestamp_millis % 1000) * 1_000_000;
         let _ = parsed.set_nanosecond(nanosecond).ok()?;
@@ -644,27 +656,32 @@ pub fn parse_sgnscmd_time(
     #[cfg(not(feature = "chrono"))]
     {
         let (year, month, day) = if let Some(date) = date {
-            let (year, s) = s.split_once('-')?;
+            let (year, date) = date.split_once('-')?;
             let year = year.parse().ok()?;
-            let (month, s) = s.split_once('-')?;
+            let (month, day) = date.split_once('-')?;
             let month = month.parse().ok()?;
-            let (day, s) = s.split_once(',')?;
             let day = day.parse().ok()?;
             (year, month, day)
         } else {
             (1970, 1, 1)
         };
-        let (hour, s) = s.split_once(':')?;
+        let (hour, time) = time.split_once(':')?;
         let hour = hour.parse().ok()?;
-        let (minute, s) = s.split_once(':')?;
+        let (minute, time) = time.split_once(':')?;
         let minute = minute.parse().ok()?;
-        Some(Self {
+        let second = time.parse().ok()?;
+
+        // currently unused
+        let _timestamp_millis = i64::parse_hex_or_dec(timestamp).ok()?;
+
+        Some(types::UtcDateTime {
             year,
             month,
             day,
             hour,
             minute,
             second,
+            tz_off: 0,
         })
     }
 }

@@ -1,5 +1,5 @@
 use core::future::Future;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
     channel::Sender,
@@ -13,7 +13,7 @@ use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
 use crate::{
-    BuildIo, Error, PowerState, SplitIo, StateSignal,
+    BuildIo, BuildIoConfig, Error, PowerState, SplitIo, StateSignal,
     at_command::{
         AtParseErr, AtParseLine, ResponseCode, cfun,
         unsolicited::{
@@ -112,11 +112,13 @@ where
 
         // First try to parse it as an unsolicited message
         match Urc::from_line(&line, &read_instant) {
+            Err(AtParseErr::Mismatch) => {
+                // Fall through to ResponseCode parser
+            }
             Err(AtParseErr::Parsing(_err)) => {
                 log::error!("error parsing urc: '{:?}', error: {:?}", line, _err);
                 return Err(Error::UnknownResponse);
             }
-            Err(AtParseErr::Mismatch) => {}
             Ok(message) => {
                 log::debug!("Got URC: {:?}", line);
                 match message {
@@ -246,11 +248,11 @@ where
         }
         // If it's not a URC, try to parse it as a regular response code
         match ResponseCode::from_line(&line, &read_instant) {
+            Err(AtParseErr::Mismatch) => {}
             Err(AtParseErr::Parsing(_err)) => {
                 log::error!("error parsing response: {:?}, error: {:?}", line, _err);
                 return Err(Error::UnknownResponse);
             }
-            Err(AtParseErr::Mismatch) => {}
             Ok(mut response) => {
                 // Sms messages are a bit of a special case,
                 // first comes the info and then the message on a new line
@@ -318,16 +320,25 @@ pub struct RawIoPump<'context, RW, M: RawMutex> {
     pub(crate) rx: &'context Pipe<M, 2048>,
     /// reads data from the tx pump
     pub(crate) tx: &'context Pipe<M, 2048>,
+    pub(crate) io_config: watch::Receiver<'context, M, BuildIoConfig, 1>,
     pub(crate) active_signal: PowerSignalListener<'context, M>,
     pub(crate) power_state: PowerState,
 }
 
 impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
     pub async fn high_power_pump(&mut self) -> Result<(), Error> {
-        let mut io = Some(self.io.build());
+        let config = self.io_config.get().await;
+        let mut io = match self.io.build(&config) {
+            Ok(io) => Some(io),
+            Err(err) => {
+                self.power_state = PowerState::Off;
+                return Err(err.into());
+            }
+        };
         let (mut reader, mut writer) = RW::IO::split(&mut io);
 
-        match select3(
+        match select4(
+            self.io_config.changed(),
             async {
                 let mut rx_buf = [0u8; 256];
                 log::trace!("Begin Rx");
@@ -357,14 +368,18 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex> RawIoPump<'context, RW, M> {
         )
         .await
         {
-            Either3::First(result) => {
+            Either4::First(_) => {
+                // Config updated, cycle this task
+                writer.flush().await.map_err(|_| Error::Serial)?;
+            }
+            Either4::Second(result) => {
                 writer.flush().await.map_err(|_| Error::Serial)?;
                 result?;
             }
-            Either3::Second(result) => {
+            Either4::Third(result) => {
                 result?;
             }
-            Either3::Third(()) => {
+            Either4::Fourth(()) => {
                 log::trace!("Pwr {:?}", &PowerState::Off);
                 self.power_state = PowerState::Off;
                 writer.flush().await.map_err(|_| Error::Serial)?;

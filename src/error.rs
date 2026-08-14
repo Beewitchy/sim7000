@@ -23,7 +23,7 @@ pub enum Error {
     Httptofs(StatusCode),
     Xtra(Xtra),
 
-    /// Context isn't fully initialized
+    /// Context isn't fully initialized, or incorrectly set up
     InvalidContext
 }
 
@@ -65,5 +65,11 @@ impl embedded_io_async::Error for Error {
 impl From<TimeoutError> for Error {
     fn from(_: TimeoutError) -> Self {
         Error::Timeout
+    }
+}
+
+impl From<crate::BuildIoError> for Error {
+    fn from(_: crate::BuildIoError) -> Self {
+        Self::InvalidContext
     }
 }

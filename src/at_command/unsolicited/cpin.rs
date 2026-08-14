@@ -17,7 +17,7 @@ impl AtParseLine for CPin {
                 "NOT READY" => Ok(Self::NotReady),
                 "NOT INSERTED" => Ok(Self::NotInserted),
                 "READY" => Ok(Self::Ready),
-                _ => Err("unkown CPIN value".into()),
+                _ => Err("unknown CPIN value".into()),
             }
         } else {
             Err(AtParseErr::Mismatch)

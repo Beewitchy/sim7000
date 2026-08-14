@@ -2,13 +2,13 @@ use core::{
     cmp::min,
     future::Future,
     marker::PhantomData,
-    mem::{self, ManuallyDrop},
+    mem::{ManuallyDrop},
 };
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
     zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
-use embassy_time::{Duration, TimeoutError, with_timeout};
+use embassy_time::{Duration, Instant, TimeoutError, with_deadline};
 use heapless::{String, Vec};
 
 use crate::{
@@ -98,10 +98,54 @@ impl RawAtCommand {
     }
 }
 
+#[derive(Clone, Copy, Default, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Timeout {
+    #[default]
+    None,
+    Unarmed(Duration),
+    Armed(Instant),
+}
+
+impl Timeout {
+    pub fn arm(&mut self, default: &Duration, now: Instant) -> &Instant {
+        *self = match self {
+            Self::None => Self::Armed(now.saturating_add(*default)),
+            Self::Unarmed(duration) => Self::Armed(now.saturating_add(*duration)),
+            Self::Armed(deadline) => return deadline,
+        };
+        match self {
+            Self::None | Self::Unarmed(_) => unreachable!(),
+            Self::Armed(deadline) => deadline,
+        }
+    }
+
+    pub fn into_timeout(mut self, default: &Duration, now: Instant) -> Instant {
+        *self.arm(default, now)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct WithTimeout<Request> {
+    request: Request,
+    timeout: Duration,
+}
+
+impl<Request: AtRequest> AtRequest for WithTimeout<Request> {
+    type Response = Request::Response;
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        self.request.encode(buf)
+    }
+    fn timeout(&self) -> Option<Duration> {
+        Some(self.timeout)
+    }
+}
+
 pub struct CommandRunner<'r, M: RawMutex> {
     commands: ZerocopySender<'r, M, RawAtCommand>,
     responses: ZerocopyReceiver<'r, M, ResponseCode>,
-    timeout: Option<Duration>,
+    default_timeout: Option<Duration>,
 }
 
 pub struct ReceiveSlotRef<'r, M: RawMutex, T> {
@@ -202,34 +246,36 @@ where
         CommandRunner {
             commands,
             responses,
-            timeout: None,
+            default_timeout: None,
         }
     }
 
     /// Send a request to the modem, but do not wait for a response.
-    pub async fn send_request<R: AtRequest>(&mut self, request: &R) -> Result<(), TimeoutError> {
-        let mut command = if let Some(timeout) = self.timeout {
-            with_timeout(timeout, self.commands.send()).await?
+    pub async fn send_request<R: AtRequest>(
+        &mut self,
+        request: &R,
+    ) -> Result<Timeout, TimeoutError> {
+        let timeout = if let Some(duration) = request.timeout().or(self.default_timeout) {
+            Timeout::Unarmed(duration)
         } else {
-            self.commands.send().await
+            Timeout::None
         };
+        let mut command = self.commands.send().await;
         command.clear();
         let _ = request.encode(&mut command.bytes);
         command.send_done();
-        Ok(())
+        Ok(timeout)
     }
 
     /// Wait for the modem to return a specific response.
     pub async fn expect_response<T: AtResponse>(
         &mut self,
+        timeout: Timeout,
     ) -> Result<MappedReceiveSlotRef<'_, M, T, ResponseCode>, Error> {
+        let default_timeout = T::default_timeout().unwrap_or(AT_DEFAULT_TIMEOUT);
+        let timeout_at = timeout.into_timeout(&default_timeout, Instant::now());
         loop {
-            let response = self.responses.receive();
-            let response = if let Some(timeout) = self.timeout {
-                with_timeout(timeout, response).await?
-            } else {
-                response.await
-            };
+            let response = with_deadline(timeout_at, self.responses.receive()).await?;
             let response = ReceiveSlotRef::new(response);
             match ReceiveSlotRef::filter_map(response, |response| T::from_generic(response)) {
                 Ok(response) => return Ok(response),
@@ -240,7 +286,11 @@ where
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
                             #[cfg(any(feature = "log", feature = "defmt"))]
-                            log::warn!("Got unexpected response {:?} while waiting for {:?}", unexpected_response, T::RESPONSE_KIND);
+                            log::warn!(
+                                "Got unexpected response {:?} while waiting for {:?}",
+                                unexpected_response,
+                                T::RESPONSE_KIND
+                            );
                         }
                     }
                 }
@@ -251,6 +301,7 @@ where
     /// Wait for the modem to return either of two response types.
     pub async fn expect_either_response<T1: AtResponse, T2: AtResponse>(
         &mut self,
+        timeout: Timeout,
     ) -> Result<
         embassy_futures::select::Either<
             MappedReceiveSlotRef<'_, M, T1, ResponseCode>,
@@ -259,13 +310,14 @@ where
         Error,
     > {
         use embassy_futures::select::Either;
+        let default_timeout = T1::default_timeout()
+            .reduce(T2::default_timeout(), |l, r| {
+                l.checked_add(r).unwrap_or(Duration::MAX)
+            })
+            .unwrap_or(AT_DEFAULT_TIMEOUT);
+        let timeout_at = timeout.into_timeout(&default_timeout, Instant::now());
         loop {
-            let response = self.responses.receive();
-            let response = if let Some(timeout) = self.timeout {
-                with_timeout(timeout, response).await?
-            } else {
-                response.await
-            };
+            let response = with_deadline(timeout_at, self.responses.receive()).await?;
             let response = ReceiveSlotRef::new(response);
             match ReceiveSlotRef::filter_map(response, |response| T1::from_generic(response)) {
                 Ok(response) => return Ok(Either::First(response)),
@@ -279,7 +331,12 @@ where
                             // TODO: we might want to make this a hard error, if/when we feel confident in
                             // how both the driver and the modem behaves
                             #[cfg(any(feature = "log", feature = "defmt"))]
-                            log::warn!("Got unexpected response {:?} while waiting for {:?} or {:?}", unexpected_response, T1::RESPONSE_KIND, T2::RESPONSE_KIND);
+                            log::warn!(
+                                "Got unexpected response {:?} while waiting for {:?} or {:?}",
+                                unexpected_response,
+                                T1::RESPONSE_KIND,
+                                T2::RESPONSE_KIND
+                            );
                         }
                     },
                 },
@@ -305,9 +362,9 @@ where
         Response: ExpectResponse<M>,
     {
         log::trace!("Running AT command: {:?}", command);
-        self.send_request(&command).await?;
+        let timeout = self.send_request(&command).await?;
         log::trace!("Waiting for response for AT command: {:?}", command);
-        let result = Response::expect(self).await;
+        let result = Response::expect(self, timeout).await;
         log::trace!("Completed AT command: {:?}", command);
 
         if let Err(e) = &result {
@@ -322,24 +379,30 @@ where
     /// Use the provided timeout value instead of the configured one.
     pub async fn run_with_timeout<Request, Response>(
         &mut self,
-        mut timeout: Option<Duration>,
-        command: Request,
+        timeout: Duration,
+        request: Request,
     ) -> Result<Response, Error>
     where
         Request: AtRequest<Response = Response>,
         Response: ExpectResponse<M>,
     {
-        mem::swap(&mut self.timeout, &mut timeout);
-        let result = self.run(command).await;
-        mem::swap(&mut self.timeout, &mut timeout);
+        let runnable = WithTimeout {
+            request,
+            timeout
+        };
+        let result = self.run(runnable).await;
         result
     }
 
     /// Set the timeout of subsequent commands
     ///
-    /// Note that the timeout defaults to [AT_DEFAULT_TIMEOUT].
-    pub fn with_timeout(self, timeout: Option<Duration>) -> Self {
-        Self { timeout, ..self }
+    /// Note that the timeout defaults to [AT_DEFAULT_TIMEOUT]
+    /// when this is seto to None.
+    pub fn with_default_timeout(self, default_timeout: Option<Duration>) -> Self {
+        Self {
+            default_timeout,
+            ..self
+        }
     }
 }
 
@@ -352,22 +415,22 @@ where
 /// tuples matching (heapless::Vec<T1, N>, T2) which will parse 0..N T1 responses
 /// until a T2 response is encountered.
 pub trait ExpectResponse<M: RawMutex>: Sized {
-    fn expect(runner: &mut CommandRunner<'_, M>) -> impl Future<Output = Result<Self, Error>>;
+    fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> impl Future<Output = Result<Self, Error>>;
 }
 
 impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
         runner
-            .expect_response::<T>()
+            .expect_response::<T>(timeout)
             .await
             .map(|response| response.clone())
     }
 }
 
 impl<T: ExpectResponse<M>, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for (T, Y) {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        let r1 = <T as ExpectResponse<M>>::expect(runner).await?;
-        let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        let r1 = <T as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r2 = <Y as ExpectResponse<M>>::expect(runner, timeout).await?;
         Ok((r1, r2))
     }
 }
@@ -375,10 +438,10 @@ impl<T: ExpectResponse<M>, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M>
 impl<T: AtResponse + Clone, Y: AtResponse + Clone, Z: AtResponse + Clone, M: RawMutex>
     ExpectResponse<M> for (T, Y, Z)
 {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        let r1 = <T as ExpectResponse<M>>::expect(runner).await?;
-        let r2 = <Y as ExpectResponse<M>>::expect(runner).await?;
-        let r3 = <Z as ExpectResponse<M>>::expect(runner).await?;
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        let r1 = <T as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r2 = <Y as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r3 = <Z as ExpectResponse<M>>::expect(runner, timeout).await?;
         Ok((r1, r2, r3))
     }
 }
@@ -393,19 +456,19 @@ impl<
     M: RawMutex,
 > ExpectResponse<M> for (T1, T2, T3, T4, T5, T6)
 {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        let r1 = <T1 as ExpectResponse<M>>::expect(runner).await?;
-        let r2 = <T2 as ExpectResponse<M>>::expect(runner).await?;
-        let r3 = <T3 as ExpectResponse<M>>::expect(runner).await?;
-        let r4 = <T4 as ExpectResponse<M>>::expect(runner).await?;
-        let r5 = <T5 as ExpectResponse<M>>::expect(runner).await?;
-        let r6 = <T6 as ExpectResponse<M>>::expect(runner).await?;
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        let r1 = <T1 as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r2 = <T2 as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r3 = <T3 as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r4 = <T4 as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r5 = <T5 as ExpectResponse<M>>::expect(runner, timeout).await?;
+        let r6 = <T6 as ExpectResponse<M>>::expect(runner, timeout).await?;
         Ok((r1, r2, r3, r4, r5, r6))
     }
 }
 
 impl<M: RawMutex> ExpectResponse<M> for () {
-    async fn expect(_: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+    async fn expect(_: &mut CommandRunner<'_, M>, _: Timeout) -> Result<Self, Error> {
         Ok(())
     }
 }
@@ -413,10 +476,10 @@ impl<M: RawMutex> ExpectResponse<M> for () {
 impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usize>
     ExpectResponse<M> for Seq<T, N, DoneT>
 {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
         let mut response_vec = heapless::Vec::new();
         let done_response = loop {
-            match runner.expect_either_response::<T, DoneT>().await {
+            match runner.expect_either_response::<T, DoneT>(timeout).await {
                 Ok(embassy_futures::select::Either::First(item)) => response_vec
                     .push(item.clone())
                     .map_err(|_| Error::BufferOverflow)?,
@@ -429,8 +492,8 @@ impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usi
 }
 
 impl<T: AtResponse + Clone, E: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for Result<T, E> {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        match runner.expect_either_response::<T, E>().await {
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        match runner.expect_either_response::<T, E>(timeout).await {
             Ok(embassy_futures::select::Either::First(item)) => Ok(Ok(item.clone())),
             Ok(embassy_futures::select::Either::Second(item)) => Ok(Err(item.clone())),
             Err(err) => Err(err),
@@ -441,8 +504,8 @@ impl<T: AtResponse + Clone, E: AtResponse + Clone, M: RawMutex> ExpectResponse<M
 impl<T1: AtResponse + Clone, T2: AtResponse + Clone, M: RawMutex> ExpectResponse<M>
     for Either<T1, T2>
 {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        match runner.expect_either_response::<T1, T2>().await {
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        match runner.expect_either_response::<T1, T2>(timeout).await {
             Ok(embassy_futures::select::Either::First(item)) => Ok(Either::T1(item.clone())),
             Ok(embassy_futures::select::Either::Second(item)) => Ok(Either::T2(item.clone())),
             Err(err) => Err(err),
@@ -451,8 +514,8 @@ impl<T1: AtResponse + Clone, T2: AtResponse + Clone, M: RawMutex> ExpectResponse
 }
 
 impl<T: AtResponse + Clone, O: TryFrom<T>, M: RawMutex> ExpectResponse<M> for MetaResponse<T, O> {
-    async fn expect(runner: &mut CommandRunner<'_, M>) -> Result<Self, Error> {
-        let o = <T as ExpectResponse<M>>::expect(runner)
+    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+        let o = <T as ExpectResponse<M>>::expect(runner, timeout)
             .await?
             .try_into()
             .map_err(|_| Error::IncompatibleMapping)?;

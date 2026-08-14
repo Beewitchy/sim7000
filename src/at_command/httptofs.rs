@@ -47,6 +47,11 @@ impl AtRequest for DownloadToFileSystem {
         }
         write!(buf, "\r")
     }
+    fn timeout(&self) -> Option<embassy_time::Duration> {
+        let retry_count = self.retry_count.unwrap_or_default() as u64;
+        let timeout = self.retry_count.unwrap_or_default() as u64;
+        Some(embassy_time::Duration::from_secs(retry_count.saturating_mul(timeout).saturating_add(5)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

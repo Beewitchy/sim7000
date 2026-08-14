@@ -20,6 +20,7 @@ impl Default for MncLen {
 pub struct Mnc(u16, MncLen);
 
 impl Mcc {
+    #[cfg(test)]
     pub(crate) const fn new(num: u16) -> Self {
         Self(num)
     }
@@ -55,10 +56,12 @@ impl defmt::Format for Mcc {
 }
 
 impl Mnc {
+    #[cfg(test)]
     pub(crate) const fn new_short(num: u16) -> Self {
         Self(num, MncLen::Short)
     }
 
+    #[cfg(test)]
     pub(crate) const fn new_long(num: u16) -> Self {
         Self(num, MncLen::Long)
     }

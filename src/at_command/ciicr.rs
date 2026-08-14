@@ -10,4 +10,8 @@ impl AtRequest for StartGprs {
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "AT+CIICR\r")
     }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        // datasheet specifies 85 seconds max response time
+        Some(embassy_time::Duration::from_secs(86))
+    }
 }

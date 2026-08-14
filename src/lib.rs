@@ -3,7 +3,8 @@
 #![allow(clippy::single_component_path_imports)]
 // large enum variants are unavoidable in no_std, since we can't box things
 #![allow(clippy::large_enum_variant, clippy::result_large_err)]
-#![feature(strip_circumfix)]
+#![cfg_attr(feature = "nightly", feature(strip_circumfix))]
+#![cfg_attr(feature = "nightly", feature(option_reduce))]
 
 // TODO: at_command should probably be moved to its own crate
 pub mod at_command;
@@ -11,6 +12,7 @@ mod drop;
 mod error;
 pub mod gnss;
 pub mod modem;
+mod parse_hex_or_dec;
 pub mod pump;
 pub mod read;
 pub mod slot;
@@ -39,6 +41,66 @@ pub trait SerialError {
     type Error: core::fmt::Debug;
 }
 
+pub use at_command::BaudRate;
+
+#[derive(Default, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EndpointFlowControlKind {
+    #[default]
+    None,
+    Software,
+    Hardware,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EndpointFlowControl {
+    #[default]
+    None,
+    Software {
+        xoff: u8,
+        xon: u8,
+    },
+    Hardware,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum BuildIoError {
+    BaudRateUnsupported,
+    FlowControlUnsupported,
+    Other,
+}
+
+#[derive(Clone, Copy)]
+pub struct BuildIoConfig {
+    baud_rate: BaudRate,
+    flow_control: EndpointFlowControl,
+}
+
+impl BuildIoConfig {
+    pub const fn default() -> Self {
+        Self {
+            baud_rate: BaudRate::Hz0,
+            flow_control: EndpointFlowControl::None,
+        }
+    }
+
+    pub const fn baud_rate(&self) -> BaudRate {
+        self.baud_rate
+    }
+
+    pub const fn flow_control(&self) -> EndpointFlowControl {
+        self.flow_control
+    }
+}
+
+impl Default for BuildIoConfig {
+    fn default() -> Self {
+        BuildIoConfig::default()
+    }
+}
+
 /// This trait is for building a `BuildIo::IO` that implements [SplitIo].
 ///
 /// The purpose of the trait is to let the use of this library to plug in UART driver types from
@@ -49,8 +111,14 @@ pub trait BuildIo {
     where
         Self: 'd;
 
+    /// Return the type of flow control this device supports.
+    fn supports_flow_control(&self) -> EndpointFlowControlKind;
+
+    /// Return the max supported baud rate for this device.
+    fn max_baud_rate(&self) -> BaudRate;
+
     /// Construct a `BuildIo::IO` that implements [SplitIo].
-    fn build(&mut self) -> Self::IO<'_>;
+    fn build(&mut self, config: &BuildIoConfig) -> Result<Self::IO<'_>, BuildIoError>;
 }
 
 /// Split self into a reader and a writer. See documentation on [SplitIo::split].

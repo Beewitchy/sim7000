@@ -10,7 +10,13 @@ pub enum GnssReport {
     Fix(GnssFix),
 }
 
-#[derive(Default, Debug, Clone, PartialEq)]
+/// Generic date-time struct.
+///
+/// ## Ord
+///
+/// Ordering is a bit weird because tz_off is included.
+/// This isn't an ideal type if you care about ordering.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DateTime {
     pub year: u16,
     pub month: u8,
@@ -39,6 +45,10 @@ impl DateTime {
             second,
             tz_off: 0,
         })
+    }
+
+    pub fn to_utc(&self) -> DateTime {
+        *self
     }
 }
 

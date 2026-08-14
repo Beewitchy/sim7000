@@ -1,7 +1,7 @@
 use super::{AtRequest, GenericOk};
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BaudRate {
     Hz0 = 0,
@@ -23,6 +23,17 @@ pub enum BaudRate {
     Hz3200000 = 3200000,
     Hz3686400 = 3686400,
     Hz4000000 = 4000000,
+}
+
+impl BaudRate {
+    #[must_use]
+    pub const fn is_auto(&self) -> bool {
+        matches!(self, Self::Hz0)
+    }
+
+    pub const fn hz(&self) -> u32 {
+        *self as u32
+    }
 }
 
 /// AT+IPR=...

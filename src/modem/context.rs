@@ -5,7 +5,7 @@ use embassy_sync::{
 
 use super::{RawAtCommand, ReadyState, SmsState, power::PowerSignal};
 use crate::{
-    StateSignal,
+    StateSignal, BuildIoConfig,
     at_command::{
         ResponseCode,
         unsolicited::{
@@ -69,6 +69,7 @@ pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) tcp: TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
     pub(crate) voltage_slot: Slot<Signal<M, VoltageWarning>>,
+    pub(crate) io_config: Watch<M, BuildIoConfig, 1>,
     pub(crate) tx_pipe: Pipe<M, 2048>,
     pub(crate) rx_pipe: Pipe<M, 2048>,
 }
@@ -99,6 +100,7 @@ where
             tcp,
             gnss_slot: Slot::new(Signal::new()),
             voltage_slot: Slot::new(Signal::new()),
+            io_config: Watch::new(),
             tx_pipe: Pipe::new(),
             rx_pipe: Pipe::new(),
         }
