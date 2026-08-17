@@ -1,28 +1,27 @@
-use core::{
-    cmp::min,
-    future::Future,
-    marker::PhantomData,
-    mem::{ManuallyDrop},
-};
+use core::{cmp::min, future::Future, marker::PhantomData, mem::ManuallyDrop};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
     zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
-use embassy_time::{Duration, Instant, TimeoutError, with_deadline};
-use heapless::{String, Vec};
+use embassy_time::{Duration, Instant, with_deadline};
+use heapless::{String, Vec, string::StringView};
 
 use crate::{
     Error,
-    at_command::{AtRequest, AtResponse, Either, MetaResponse, ResponseCode, Seq},
+    at_command::{
+        AtRequest, AtResponse, CommandGroup, Either, MetaResponse, RequestType, ResponseCode, Seq,
+    },
     log,
 };
 
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub const MAX_COMMAND_LEN: usize = 599;
+
 #[derive(Clone)]
 pub struct RawAtCommand {
-    pub(crate) bytes: Vec<u8, 256>,
+    pub(crate) bytes: Vec<u8, { MAX_COMMAND_LEN + 1 }>,
     pub(crate) binary: bool,
 }
 
@@ -49,12 +48,23 @@ impl<'a> core::iter::Extend<&'a u8> for RawAtCommand {
     }
 }
 
-impl From<String<256>> for RawAtCommand {
-    fn from(s: String<256>) -> Self {
+impl From<String<{ MAX_COMMAND_LEN + 1 }>> for RawAtCommand {
+    fn from(s: String<{ MAX_COMMAND_LEN + 1 }>) -> Self {
         RawAtCommand {
             bytes: s.into_bytes(),
             binary: false,
         }
+    }
+}
+
+impl TryFrom<&StringView> for RawAtCommand {
+    type Error = Error;
+
+    fn try_from(value: &StringView) -> Result<Self, Self::Error> {
+        Ok(RawAtCommand {
+            bytes: Vec::from_slice(value.as_bytes()).map_err(|_| Error::BufferOverflow)?,
+            binary: false,
+        })
     }
 }
 
@@ -134,11 +144,76 @@ struct WithTimeout<Request> {
 
 impl<Request: AtRequest> AtRequest for WithTimeout<Request> {
     type Response = Request::Response;
+    const TYPE: RequestType = Request::TYPE;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         self.request.encode(buf)
     }
     fn timeout(&self) -> Option<Duration> {
         Some(self.timeout)
+    }
+}
+
+// Impl request for tuples to allow chained requests
+impl<R1: AtRequest, R2: AtRequest> AtRequest for (R1, R2) {
+    type Response = (R1::Response, R2::Response);
+    const TYPE: RequestType = RequestType::Combined {
+        first: match R1::TYPE {
+            RequestType::Command(group) => group,
+            RequestType::NonCommand => CommandGroup::NonCommand,
+            RequestType::Combined { first, last: _ } => first,
+        },
+        last: match R2::TYPE {
+            RequestType::Command(group) => group,
+            RequestType::NonCommand => CommandGroup::NonCommand,
+            RequestType::Combined { first: _, last } => last,
+        },
+    };
+
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+        self.0.encode(buf)?;
+        match R2::TYPE.first_command() {
+            CommandGroup::Extended => write!(buf, ";")?,
+            CommandGroup::Basic | CommandGroup::NonCommand | CommandGroup::Context => {}
+        };
+        self.1.encode(buf)
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        cfg_select! {
+            feature = "nightly" => self.0.timeout().reduce(self.1.timeout(), |t1, t2| {
+                t1.checked_add(t2).unwrap_or(Duration::MAX)
+            }),
+            _ => self.0.timeout().max(self.1.timeout()),
+        }
+    }
+}
+
+pub fn encode_request<R: AtRequest>(
+    request: &R,
+    buf: &mut impl core::fmt::Write,
+) -> core::fmt::Result {
+    match R::TYPE {
+        RequestType::NonCommand
+        | RequestType::Command(CommandGroup::NonCommand)
+        | RequestType::Combined {
+            first: CommandGroup::NonCommand,
+            last: CommandGroup::NonCommand,
+        } => request.encode(buf),
+        RequestType::Command(CommandGroup::Context) => {
+            request.encode(buf)?;
+            // Note that this is just \r (<CR>) to mark the end
+            // of the command. Linefeed is not used for this
+            write!(buf, "\r")
+        }
+        RequestType::Command(CommandGroup::Basic | CommandGroup::Extended)
+        // This matches on any Combined value where *either*
+        // end is a command, since only the case where *both*
+        // are non-commands is covered above
+        | RequestType::Combined { first: _, last: _ } => {
+            write!(buf, "AT")?;
+            request.encode(buf)?;
+            write!(buf, "\r")
+        }
     }
 }
 
@@ -251,20 +326,16 @@ where
     }
 
     /// Send a request to the modem, but do not wait for a response.
-    pub async fn send_request<R: AtRequest>(
-        &mut self,
-        request: &R,
-    ) -> Result<Timeout, TimeoutError> {
-        let timeout = if let Some(duration) = request.timeout().or(self.default_timeout) {
-            Timeout::Unarmed(duration)
-        } else {
-            Timeout::None
-        };
+    pub async fn send_request<R: AtRequest>(&mut self, request: &R) -> Result<Timeout, Error> {
         let mut command = self.commands.send().await;
         command.clear();
-        let _ = request.encode(&mut command.bytes);
+        encode_request(request, &mut command.bytes).map_err(|_| Error::BufferOverflow)?;
         command.send_done();
-        Ok(timeout)
+        if let Some(duration) = request.timeout().or(self.default_timeout) {
+            Ok(Timeout::Unarmed(duration))
+        } else {
+            Ok(Timeout::None)
+        }
     }
 
     /// Wait for the modem to return a specific response.
@@ -310,11 +381,14 @@ where
         Error,
     > {
         use embassy_futures::select::Either;
-        let default_timeout = T1::default_timeout()
-            .reduce(T2::default_timeout(), |l, r| {
-                l.checked_add(r).unwrap_or(Duration::MAX)
-            })
-            .unwrap_or(AT_DEFAULT_TIMEOUT);
+        let default_timeout = cfg_select! {
+            feature = "nightly" => T1::default_timeout()
+                .reduce(T2::default_timeout(), |l, r| {
+                    l.checked_add(r).unwrap_or(Duration::MAX)
+                }),
+            _ => T1::default_timeout().max(T2::default_timeout()),
+        }
+        .unwrap_or(AT_DEFAULT_TIMEOUT);
         let timeout_at = timeout.into_timeout(&default_timeout, Instant::now());
         loop {
             let response = with_deadline(timeout_at, self.responses.receive()).await?;
@@ -361,7 +435,7 @@ where
         Request: AtRequest<Response = Response>,
         Response: ExpectResponse<M>,
     {
-        log::trace!("Running AT command: {:?}", command);
+        log::debug!("Running AT command: {:?}", command);
         let timeout = self.send_request(&command).await?;
         log::trace!("Waiting for response for AT command: {:?}", command);
         let result = Response::expect(self, timeout).await;
@@ -386,10 +460,7 @@ where
         Request: AtRequest<Response = Response>,
         Response: ExpectResponse<M>,
     {
-        let runnable = WithTimeout {
-            request,
-            timeout
-        };
+        let runnable = WithTimeout { request, timeout };
         let result = self.run(runnable).await;
         result
     }
@@ -415,7 +486,10 @@ where
 /// tuples matching (heapless::Vec<T1, N>, T2) which will parse 0..N T1 responses
 /// until a T2 response is encountered.
 pub trait ExpectResponse<M: RawMutex>: Sized {
-    fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> impl Future<Output = Result<Self, Error>>;
+    fn expect(
+        runner: &mut CommandRunner<'_, M>,
+        timeout: Timeout,
+    ) -> impl Future<Output = Result<Self, Error>>;
 }
 
 impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {

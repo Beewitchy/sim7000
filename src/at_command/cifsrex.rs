@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CIFSREX
 #[derive(Debug)]
@@ -9,8 +9,9 @@ pub struct GetLocalIpExt;
 
 impl AtRequest for GetLocalIpExt {
     type Response = (IpExt, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CIFSREX\r")
+        write!(buf, "+CIFSREX")
     }
 }
 

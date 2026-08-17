@@ -6,13 +6,11 @@ use crate::{
     BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower,
     PowerState,
     at_command::{
-        GenericOk, AtRequest, CharacterSet, GetPinStatus, NetworkMode, SelectMessageService, Seq,
+        AtRequest, CharacterSet, GenericOk, NetworkMode, SelectMessageService, Seq,
         SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, atz,
         cbatchk, ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
-        cereg,
-        cfgri,
-        cfun, cgact, cgmr, cgnapn, cgnscold, cgnscpy,
+        cereg, cfgri, cfun, cgact, cgmr, cgnapn, cgnscold, cgnscpy,
         cgnsmod::{self, WorkMode},
         cgnspwr, cgnsurc, cgnsxtra, cgreg,
         cmee::{self, CMEErrorMode},
@@ -22,7 +20,7 @@ use crate::{
         cmnb::{self, NbMode},
         cnact, cncfg,
         cnmi::{SetSmsIndication, SmsIndicationMode, SmsMtMode},
-        cnmp, cnsmod, cntp, cntpcid, cops, cpowd,
+        cnmp, cnsmod, cntp, cntpcid, cops, cpin, cpowd,
         cpsi::{self},
         creg, csclk, csq, gsn, httptofs, ifc,
         ipr::{self, BaudRate},
@@ -179,29 +177,30 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             reg_retries: 0,
         };
 
-        let io_config = &context
-                .shared
-                .io_config;
+        let io_config = &context.shared.io_config;
         let config_sender = io_config.sender();
         // Default to max baud rate assuming that it is saved
         config_sender.send(BuildIoConfig {
             baud_rate: max_baud_rate,
-            flow_control: EndpointFlowControl::None
+            flow_control: EndpointFlowControl::None,
         });
 
         let io_pump = RawIoPump {
             io,
-            io_config: io_config.receiver()
-                .ok_or(Error::InvalidContext)?,
+            io_config: io_config.receiver().ok_or(Error::InvalidContext)?,
             rx: &context.shared.rx_pipe,
             tx: &context.shared.tx_pipe,
             power_state: PowerState::Off,
             active_signal: context.shared.active_signal.listener(),
         };
 
+        // let mut lines = embassy_sync::zerocopy_channel::Channel::new(&mut [crate::pump::RxLine::new(), crate::pump::RxLine::new()]);
+        // let (lines_sender, lines_rx) = lines.split();
+
         let rx_pump = RxPump {
             reader: ModemReader::new(&context.shared.rx_pipe),
             generic_response: response_sender,
+            // lines_sender,
             registration_events: &context.shared.registration_events,
             tcp: &context.shared.tcp,
             gnss: context.shared.gnss_slot.peek(),
@@ -236,7 +235,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 with_timeout(MODEM_POWER_TIMEOUT, self.power.enable()).await?;
             }
             if with_timeout(
-                Duration::from_secs(30 + attempt * 10),
+                Duration::from_secs(30 + attempt * 30),
                 ready.get_and(ReadyState::is_ready),
             )
             .await
@@ -248,13 +247,25 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             // is on default settings it may be in that mode. Try
             // setting a fixed baud rate before retrying:
             let baud_rate = self.max_baud_rate.min(BaudRate::Hz115200);
-            match self.commands.lock().await.run(ipr::SetBaudRate(baud_rate)).await {
+            match self
+                .commands
+                .lock()
+                .await
+                .run(ipr::SetBaudRate(baud_rate))
+                .await
+            {
                 Ok(GenericOk) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate,
                         flow_control: EndpointFlowControl::None,
                     });
                     return Ok(());
+                }
+                Err(Error::Timeout) => {
+                    self.context.io_config.sender().send(BuildIoConfig {
+                        baud_rate,
+                        flow_control: EndpointFlowControl::None,
+                    });
                 }
                 Err(_) => {}
             }
@@ -295,24 +306,17 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             commands.run(atz::ResetConfigurationToDefaults).await?;
         }
 
-        // todo: ellie (16.05.2026) - sleep & slow-clock configuration
-        commands.run(csclk::SetSlowClock(false)).await?;
-
-        let baud_rate = self.max_baud_rate;
-        commands.run(ipr::SetBaudRate(baud_rate)).await?;
-        self.context.io_config.sender().send(BuildIoConfig {
-            baud_rate,
-            flow_control: EndpointFlowControl::None,
-        });
-
         // Set up flow control, the modem does not save this state on reboot.
         // We need to set it as fast as possible to avoid dropping bytes.
         let flow_control_command: ifc::SetFlowControl = self.supported_flow_control.into();
         for _ in 0..5 {
-            match with_timeout(Duration::from_millis(2000),
-                commands.run(flow_control_command))
-            .await {
-                Ok(Ok(GenericOk)) => {
+            match with_timeout(
+                Duration::from_millis(2000),
+                commands.run((flow_control_command, ipr::SetBaudRate(self.max_baud_rate))),
+            )
+            .await
+            {
+                Ok(Ok((GenericOk, GenericOk))) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate: self.max_baud_rate,
                         flow_control: match self.supported_flow_control {
@@ -325,13 +329,24 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     });
                     break;
                 }
-                Ok(Err(Error::Serial)) | Ok(Err(Error::Transmit)) | Ok(Err(Error::UnknownResponse)) | Ok(Err(Error::BufferOverflow)) | Err(embassy_time::TimeoutError) => {
+                Ok(Err(Error::Serial))
+                | Ok(Err(Error::Transmit))
+                | Ok(Err(Error::UnknownResponse))
+                | Ok(Err(Error::BufferOverflow))
+                | Err(embassy_time::TimeoutError) => {
+                    self.context.io_config.sender().send(BuildIoConfig {
+                        baud_rate: BaudRate::Hz115200,
+                        flow_control: EndpointFlowControl::None,
+                    });
                 }
                 Ok(Err(_)) => {
                     break;
                 }
             }
         }
+
+        // todo: ellie (16.05.2026) - sleep & slow-clock configuration
+        commands.run(csclk::SetSlowClock(false)).await?;
 
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
@@ -360,7 +375,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         }
 
         // todo: ellie (16.05.2026) - add Ri interrupt pin & bat check configuration
-        commands.run(cfgri::ConfigureRiPin(cfgri::RiPinMode::Off)).await?;
+        commands
+            .run(cfgri::ConfigureRiPin(cfgri::RiPinMode::Off))
+            .await?;
         commands.run(cbatchk::EnableVBatCheck(false)).await?;
 
         // TODO: SIM7000
@@ -423,9 +440,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         // We need to set it as fast as possible to avoid dropping bytes.
         let flow_control_command: ifc::SetFlowControl = self.supported_flow_control.into();
         for _ in 0..5 {
-            match with_timeout(Duration::from_millis(2000),
-                commands.run(flow_control_command))
-            .await {
+            match with_timeout(
+                Duration::from_millis(2000),
+                commands.run(flow_control_command),
+            )
+            .await
+            {
                 Ok(Ok(GenericOk)) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate: self.max_baud_rate,
@@ -439,8 +459,11 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                     });
                     break;
                 }
-                Ok(Err(Error::Serial)) | Ok(Err(Error::Transmit)) | Ok(Err(Error::UnknownResponse)) | Ok(Err(Error::BufferOverflow)) | Err(embassy_time::TimeoutError) => {
-                }
+                Ok(Err(Error::Serial))
+                | Ok(Err(Error::Transmit))
+                | Ok(Err(Error::UnknownResponse))
+                | Ok(Err(Error::BufferOverflow))
+                | Err(embassy_time::TimeoutError) => {}
                 Ok(Err(_)) => {
                     break;
                 }
@@ -596,7 +619,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
             // Sometimes SIM isn't detected--cycle it to try
             // get it working
             for retry in 0..self.reg_retries + 1 {
-                match mode {
+                match &mode {
                     RadioAccessTechnology::LteCatM1 => {
                         commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
                         commands.run(cmnb::SetNbMode(NbMode::CatM)).await?;
@@ -639,7 +662,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 Some(ReadyState::PowerDown) => return Err(Error::InvalidContext),
                 None | Some(ReadyState::Ready) => {}
             }
-            let (pin_status, _) = commands.run(GetPinStatus).await?;
+            let (pin_status, _) = commands.run(cpin::GetPinStatus).await?;
             match pin_status {
                 CPin::NotReady => {}
                 CPin::NotInserted => {}
@@ -675,34 +698,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         {
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
-            let ready = self.context.ready.receiver();
-            match commands
-                .run_with_timeout(
-                    Duration::from_secs(35),
-                    cpowd::PowerDown(cpowd::Mode::Normal),
-                )
-                .await
-            {
-                Ok(()) => {
-                    if let Some(mut ready) = ready {
-                        match with_timeout(
-                            Duration::from_secs(35),
-                            ready.get_and(|s| *s == ReadyState::PowerDown),
-                        )
-                        .await
-                        {
-                            Ok(ReadyState::PowerDown) => {
-                                log::debug!("Modem powered down");
-                            }
-                            Err(embassy_time::TimeoutError) => {
-                                log::warn!("Power down command didn't complete, timeout");
-                            }
-                            Ok(_) => unreachable!(),
-                        }
-                    }
+            match commands.run(cpowd::NormalPowerDown).await {
+                Ok(GenericOk) => {
+                    log::debug!("Modem powered down");
                 }
                 Err(_err) => {
-                    log::warn!("Power down command didn't complete, {:?}", _err);
+                    log::warn!("Power down command didn't complete, {:?}. Continuing deactivate anyway, but modem may be in an unexpected state.", _err);
                 }
             }
         }
@@ -742,13 +743,23 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         drop_result
     }
 
+    /// Default time out for [Self::wait_for_registration()]
+    const DEFAULT_REGISTRATION_TIME_OUT: Duration = Duration::from_secs(10 * 60);
+
     /// Wait until the modem has registered to a cell tower.
+    ///
+    /// Times out after the provided time out, or default time out of
+    /// [Self::DEFAULT_REGISTRATION_TIME_OUT].
+    ///
+    /// This function does not activate the modem, so if the modem is not active
+    /// this will time out either after the provided time out or default time
+    /// out.
     pub async fn wait_for_registration(
         &self,
         timeout: Option<embassy_time::Duration>,
     ) -> Result<NetworkRegistration, Error> {
         log::debug!("waiting for cell registration");
-        let timeout = timeout.unwrap_or(Duration::from_secs(10 * 60));
+        let timeout = timeout.unwrap_or(Self::DEFAULT_REGISTRATION_TIME_OUT);
         const LONG_REG_DURATION: Duration = Duration::from_secs(20);
         let long_timeout = timeout > LONG_REG_DURATION;
         let waiter = async move {
@@ -1076,9 +1087,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 cid: 1,
             })
             .await?;
-        let (_, network_time) = commands
-            .run_with_timeout(Duration::from_secs(60), cntp::Execute)
-            .await?;
+        let (_, network_time) = commands.run(cntp::Execute).await?;
 
         commands
             .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -1097,7 +1106,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     pub async fn query_local_time(
         &self,
     ) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
-        self.run_command_with_timeout(Duration::from_secs(60), cclk::GetTime)
+        self.run_command(cclk::GetTime)
             .await
             .map(|(cclk_time, _)| (cclk_time.time, cclk_time.instant))
     }
@@ -1106,9 +1115,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// Call [Self::local_timestamp] to retrieve the current status.
     pub async fn enable_local_timestamp(&self) -> Result<(), Error> {
-        let _ = self
-            .run_command_with_timeout(Duration::from_secs(30), cntp::EnableLocalTimestamp(true))
-            .await?;
+        let _ = self.run_command(cntp::EnableLocalTimestamp(true)).await?;
         Ok(())
     }
     /// Return the current utc time status with separate timezone & dst information
@@ -1164,9 +1171,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
                 .await?;
         }
 
-        let _ = commands
-            .run_with_timeout(Duration::from_secs(30), cntp::EnableLocalTimestamp(true))
-            .await?;
+        let _ = commands.run(cntp::EnableLocalTimestamp(true)).await?;
 
         // TODO: SIM7000
         // commands
@@ -1222,8 +1227,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///  longer it should be valid for.
     pub async fn enable_gnss_xtra(
         &mut self,
-        #[cfg_attr(not(feature = "chrono"), allow(unused))]
-        last_known_fix: Option<cclk::types::UtcDateTime>,
+        #[cfg_attr(not(feature = "chrono"), allow(unused))] last_known_fix: Option<
+            cclk::types::UtcDateTime,
+        >,
     ) -> Result<cgnsxtra::GnssXtraInfo, ColdStartErr> {
         self.async_drop().await?;
 
@@ -1321,12 +1327,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 
     pub async fn query_system_info(&mut self) -> Result<cpsi::SystemInfo, Error> {
+        self.wait_for_ready(1).await?;
         self.run_command(cpsi::GetSystemInfo)
             .await
             .map(|(system_info, _)| system_info)
     }
 
     pub async fn query_signal(&mut self) -> Result<csq::SignalQuality, Error> {
+        self.wait_for_ready(1).await?;
         self.run_command(csq::GetSignalQuality)
             .await
             .map(|(response, _)| response)
@@ -1336,34 +1344,37 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     ///
     /// This command can take up to 120 seconds to run.
     pub async fn query_operator_info(&mut self) -> Result<cops::OperatorInfo, Error> {
-        // max response time is 120 seconds
-        self.run_command_with_timeout(Duration::from_secs(121), cops::GetOperatorInfo)
+        self.wait_for_ready(1).await?;
+        self.run_command(cops::GetOperatorInfo)
             .await
             .map(|(response, _)| response)
     }
 
     pub async fn query_ip(&mut self) -> Result<heapless::Vec<cnact::CNActPDP, 4>, Error> {
+        self.wait_for_ready(1).await?;
         try_retry!(
             ("CNACT", 5, Duration::from_millis(500)),
-            self.run_command_with_timeout(Duration::from_secs(1), cnact::GetAppNetworkPDP)
-                .await
+            self.run_command(cnact::GetAppNetworkPDP).await
         )
         .map(|Seq(response, _)| response)
     }
 
     pub async fn query_iccid(&mut self) -> Result<ccid::Iccid, Error> {
+        self.wait_for_ready(1).await?;
         self.run_command(ccid::ShowIccid)
             .await
             .map(|(response, _)| response)
     }
 
     pub async fn query_imei(&mut self) -> Result<String<16>, Error> {
+        self.wait_for_ready(1).await?;
         self.run_command(gsn::GetImei)
             .await
             .map(|(response, _)| response.imei)
     }
 
     pub async fn query_firmware_version(&mut self) -> Result<cgmr::FwVersion, Error> {
+        self.wait_for_ready(1).await?;
         self.run_command(cgmr::GetFwVersion)
             .await
             .map(|(response, _)| response)
@@ -1438,16 +1449,29 @@ impl<M: RawMutex> SmsStream<'_, '_, M> {
         Ok(sms)
     }
 
-    pub async fn send_sms(&mut self, destination: &str, message: &str) -> Result<(), Error> {
+    pub async fn send_sms(
+        &mut self,
+        destination: &str,
+        message: &str,
+        timeout: Option<Duration>,
+    ) -> Result<(), Error> {
         let mut commands = self.commands.lock().await;
-        commands
-            .run_with_timeout(
-                Duration::from_secs(10),
-                cmgs::SendSms {
+        if let Some(timeout) = timeout {
+            commands
+                .run_with_timeout(
+                    timeout,
+                    cmgs::SendSms {
+                        destination: destination.try_into().unwrap_or_default(),
+                    },
+                )
+                .await?;
+        } else {
+            commands
+                .run(cmgs::SendSms {
                     destination: destination.try_into().unwrap_or_default(),
-                },
-            )
-            .await?;
+                })
+                .await?;
+        }
         commands
             .run(SendSmsMessage(message.try_into().unwrap_or_default()))
             .await?;

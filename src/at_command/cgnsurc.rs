@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 
 /// AT+CGNSURC=...
 #[derive(Debug)]
@@ -11,7 +11,8 @@ pub struct ConfigureGnssUrc {
 
 impl AtRequest for ConfigureGnssUrc {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSURC={}\r", self.period)
+        write!(buf, "+CGNSURC={}", self.period)
     }
 }

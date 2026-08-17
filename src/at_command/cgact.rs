@@ -1,7 +1,8 @@
 use core::str::FromStr as _;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, GenericOk, ResponseCode, Seq,
+    AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, CommandGroup, GenericOk,
+    RequestType, ResponseCode, Seq,
 };
 
 /// AT+CGACT?
@@ -11,9 +12,9 @@ pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
     type Response = Seq<CGact, 4, GenericOk>;
-
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGACT?\r")
+        write!(buf, "+CGACT?")
     }
 }
 
@@ -26,9 +27,9 @@ pub struct CGact {
 
 impl AtRequest for CGact {
     type Response = (heapless::Vec<CGact, 4>, GenericOk);
-
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGACT={},{}\r", self.cid, self.state as u8)
+        write!(buf, "+CGACT={},{}", self.cid, self.state as u8)
     }
 }
 

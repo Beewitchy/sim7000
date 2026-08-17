@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode};
 
 /// AT+COPS?
 #[derive(Debug)]
@@ -36,8 +36,13 @@ pub enum OperatorFormat {
 
 impl AtRequest for GetOperatorInfo {
     type Response = (OperatorInfo, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+COPS?\r")
+        write!(buf, "+COPS?")
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        // Max response time is 120s
+       Some(embassy_time::Duration::from_secs(121))
     }
 }
 

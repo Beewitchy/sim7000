@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk, unsolicited};
+use super::{AtRequest, RequestType, CommandGroup, GenericOk, unsolicited};
 
 /// AT+CPIN?
 #[derive(Debug)]
@@ -7,7 +7,9 @@ pub struct GetPinStatus;
 
 impl AtRequest for GetPinStatus {
     type Response = (unsolicited::CPin, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
+    #[inline]
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CPIN?\r")
+        write!(buf, "+CPIN?")
     }
 }

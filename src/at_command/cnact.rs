@@ -2,7 +2,7 @@ use heapless::String;
 
 use crate::{util::collect_array};
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, Seq};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, Seq};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -37,8 +37,9 @@ pub struct SetAppNetwork {
 
 impl AtRequest for SetAppNetwork {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNACT={},\"{}\"\r", self.mode as u8, self.apn)
+        write!(buf, "+CNACT={},\"{}\"", self.mode as u8, self.apn)
     }
 }
 
@@ -57,12 +58,13 @@ pub struct SetAppNetworkPDP(pub CNActPDP);
 
 impl AtRequest for SetAppNetworkPDP {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNACT={},{}", self.0.pdp_index, self.0.mode as u8)?;
+        write!(buf, "+CNACT={},{}", self.0.pdp_index, self.0.mode as u8)?;
         if let Some(address) = &self.0.address {
             write!(buf, ",\"{}\"", address.as_str())?;
         }
-        write!(buf, "\r")
+        Ok(())
     }
 }
 
@@ -73,9 +75,12 @@ pub struct GetAppNetworkPDP;
 
 impl AtRequest for GetAppNetworkPDP {
     type Response = Seq<CNActPDP, 4, GenericOk>;
-
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNACT?\r")
+        write!(buf, "+CNACT?")
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        Some(embassy_time::Duration::from_millis(1100))
     }
 }
 

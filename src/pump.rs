@@ -49,9 +49,22 @@ pub trait Pump {
     fn pump(&mut self) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
+#[derive(Clone)]
+pub struct RxLine {
+    line: heapless::String<599>,
+    views: usize,
+}
+
+impl RxLine {
+    pub const fn new() -> Self {
+        Self { line: heapless::String::new(), views: 0 }
+    }
+}
+
 pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) reader: ModemReader<'context, M>,
     pub(crate) generic_response: ZerocopySender<'context, M, ResponseCode>,
+    // pub(crate) lines_sender: ZerocopySender<'context, M, RxLine>,
     pub(crate) tcp: &'context TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
@@ -192,6 +205,12 @@ where
                     }
                     Urc::PowerDown(PowerDown::Normal) => {
                         self.ready.send(ReadyState::PowerDown);
+                        // This can actually be a solicited response but without a
+                        // stateful parser there's no way to know, so just assume
+                        // it is and put it in the response queue
+                        let mut buf = self.generic_response.send().await;
+                        *buf = ResponseCode::PowerDown(PowerDown::Normal);
+                        buf.send_done();
                         return Ok(());
                     }
                     Urc::Psuttz(ttz) => {
@@ -207,16 +226,10 @@ where
                         // This can actually be a solicited response but without a
                         // stateful parser there's no way to know, so just assume
                         // it is and put it in the response queue
-                        if let Some(mut buf) = self.generic_response.try_send() {
-                            *buf = ResponseCode::CPin(cpin);
-                            buf.send_done();
-                            return Ok(());
-                        } else {
-                            // No room to immediately return the response, but
-                            // we want to avoid locking up if the reader is
-                            // stalled so error out rather than waiting
-                            return Err(Error::BufferOverflow);
-                        }
+                        let mut buf = self.generic_response.send().await;
+                        *buf = ResponseCode::CPin(cpin);
+                        buf.send_done();
+                        return Ok(());
                     }
                     Urc::CFun(cfun) => {
                         match cfun.0 {

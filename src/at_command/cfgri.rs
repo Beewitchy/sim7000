@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -16,7 +16,8 @@ pub struct ConfigureRiPin(pub RiPinMode);
 
 impl AtRequest for ConfigureRiPin {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CFGRI={}\r", self.0 as u8)
+        write!(buf, "+CFGRI={}", self.0 as u8)
     }
 }

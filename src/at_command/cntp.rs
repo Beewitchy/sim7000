@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode, cclk};
 
 /// AT+CNTP=...
 #[derive(Debug)]
@@ -19,10 +19,11 @@ pub struct Execute;
 
 impl AtRequest for SynchronizeNetworkTime {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "AT+CNTP=\"{}\",{},{}\r",
+            "CNTP=\"{}\",{},{}",
             self.ntp_server.as_str(),
             self.timezone_quarter_hours,
             self.cid
@@ -32,8 +33,12 @@ impl AtRequest for SynchronizeNetworkTime {
 
 impl AtRequest for Execute {
     type Response = (GenericOk, NetworkTime);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNTP\r")
+        write!(buf, "CNTP")
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        Some(embassy_time::Duration::from_secs(60))
     }
 }
 
@@ -116,11 +121,15 @@ pub struct EnableLocalTimestamp(pub bool);
 
 impl AtRequest for EnableLocalTimestamp {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let param = match self.0 {
             false => '0',
             true => '1',
         };
-        write!(buf, "AT+CLTS={}\r", param)
+        write!(buf, "+CLTS={}", param)
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        Some(embassy_time::Duration::from_secs(30))
     }
 }

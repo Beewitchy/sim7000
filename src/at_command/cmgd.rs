@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 
 /// AT+CMGD=...
 #[derive(Debug)]
@@ -30,11 +30,12 @@ impl DeleteFlag {
 
 impl AtRequest for DeleteSms {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if let DeleteFlag::Index(index) = self.0 {
-            write!(buf, "AT+CMGD={}\r", index)
+            write!(buf, "+CMGD={}", index)
         } else {
-            write!(buf, "AT+CMGD=0,{}\r", self.0.as_u8())
+            write!(buf, "+CMGD=0,{}", self.0.as_u8())
         }
     }
 }

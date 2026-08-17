@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// AT+CGNSPWR=...
 #[derive(Debug)]
@@ -7,8 +7,12 @@ pub struct SetGnssPower(pub bool);
 
 impl AtRequest for SetGnssPower {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        let arg = if self.0 { "1" } else { "0" };
-        write!(buf, "AT+CGNSPWR={arg}\r")
+        if self.0 {
+            write!(buf, "+CGNSPWR=1")
+        } else {
+            write!(buf, "+CGNSPWR=0")
+        }
     }
 }

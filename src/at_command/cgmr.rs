@@ -2,7 +2,10 @@ use core::str::FromStr;
 
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{
+    AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType,
+    ResponseCode,
+};
 
 /// Maximum version length that we can read.
 ///
@@ -20,9 +23,9 @@ pub struct GetFwVersion;
 
 impl AtRequest for GetFwVersion {
     type Response = (FwVersion, GenericOk);
-
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGMR\r")
+        write!(buf, "+CGMR")
     }
 }
 
@@ -51,9 +54,7 @@ pub struct FwVersion(pub String<MAX_VERSION_LEN>);
 
 impl AtParseLine for FwVersion {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let version = line
-            .strip_prefix("Revision:")
-            .ok_or(AtParseErr::Mismatch)?;
+        let version = line.strip_prefix("Revision:").ok_or(AtParseErr::Mismatch)?;
 
         String::from_str(version)
             .map(Self)
@@ -79,7 +80,9 @@ mod test {
 
     #[test]
     fn parse_version() {
-        assert!(FwVersion::from_line("Revision:1529B07SIM7000G", &embassy_time::Instant::now()).is_ok());
+        assert!(
+            FwVersion::from_line("Revision:1529B07SIM7000G", &embassy_time::Instant::now()).is_ok()
+        );
         assert!(FwVersion::from_line("complete bogus", &embassy_time::Instant::now()).is_err());
     }
 }

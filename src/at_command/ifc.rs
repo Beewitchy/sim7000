@@ -1,6 +1,6 @@
 use crate::EndpointFlowControlKind;
 
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, GenericOk, RequestType, CommandGroup};
 
 /// AT+IFC=...
 #[derive(Default, Clone, Copy, Debug)]
@@ -22,10 +22,11 @@ pub enum FlowControl {
 
 impl AtRequest for SetFlowControl {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "AT+IFC={},{}\r",
+            "+IFC={},{}",
             self.dce_by_dte as u8, self.dte_by_dce as u8
         )
     }

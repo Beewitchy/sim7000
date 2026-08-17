@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// ATE1 / ATE0
 #[derive(Debug)]
@@ -7,7 +7,8 @@ pub struct SetEcho(pub bool);
 
 impl AtRequest for SetEcho {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Basic);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        if self.0 { write!(buf, "ATE1\r") } else { write!(buf, "ATE0\r") }
+        if self.0 { write!(buf, "E1") } else { write!(buf, "E0") }
     }
 }

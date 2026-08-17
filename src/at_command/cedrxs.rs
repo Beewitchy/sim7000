@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,10 +77,11 @@ impl TryFrom<u8> for EdrxCycleLength {
 
 impl AtRequest for ConfigureEDRX {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "AT+CEDRXS={},{},\"{:04b}\"\r",
+            "+CEDRXS={},{},\"{:04b}\"",
             self.n as u8, self.act_type as u8, self.requested_edrx_value as u8,
         )
     }
@@ -93,8 +94,9 @@ pub struct GetEDRXSetting;
 
 impl AtRequest for GetEDRXSetting {
     type Response = (ConfigureEDRX, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CEDRXS?\r",)
+        write!(buf, "+CEDRXS?",)
     }
 }
 
@@ -157,7 +159,8 @@ pub struct TestEDRX;
 
 impl AtRequest for TestEDRX {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CEDRXS=?\r",)
+        write!(buf, "+CEDRXS=?",)
     }
 }

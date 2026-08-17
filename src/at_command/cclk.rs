@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 
 use crate::parse_hex_or_dec::ParseHexOrDec as _;
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode};
 
 /// AT+CCLK
 #[derive(Debug)]
@@ -16,8 +16,12 @@ impl GetTime {
 
 impl AtRequest for GetTime {
     type Response = (CclkTime, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CCLK?\r")
+        write!(buf, "+CCLK?")
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        Some(embassy_time::Duration::from_secs(60))
     }
 }
 
@@ -355,8 +359,11 @@ impl FromCclkStr for super::unsolicited::DateTime {
             .split_once(|c: char| !c.is_digit(10))
             .ok_or("Missing seconds field")?;
         let second = second.parse().map_err(|_| "Invalid character")?;
-        let (tz_off, s) = s.split_at_checked(3).ok_or("Missing timezone field")?;
-        let tz_off = i8::from_str_radix(tz_off, 10).unwrap_or_default();
+        let (tz_off, s) = if let Some((tz_off, s)) = s.split_at_checked(3) {
+            (i8::from_str_radix(tz_off, 10).unwrap_or_default(), s)
+        } else {
+            (0, s)
+        };
         Ok((
             Self {
                 year,

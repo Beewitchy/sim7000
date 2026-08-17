@@ -1,6 +1,6 @@
 use crate::{error::Xtra, Error};
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CGNSCOLD
 #[derive(Debug)]
@@ -38,22 +38,25 @@ impl XtraStatus {
 
 impl AtRequest for GnssColdStart {
     type Response = (GenericOk, XtraStatus);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSCOLD\r")
+        write!(buf, "+CGNSCOLD")
     }
 }
 
 impl AtRequest for GnssWarmStart {
     type Response = (GenericOk, XtraStatus);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSWARM\r")
+        write!(buf, "+CGNSWARM")
     }
 }
 
 impl AtRequest for GnssHotStart {
     type Response = (GenericOk, XtraStatus);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSHOT\r")
+        write!(buf, "+CGNSHOT")
     }
 }
 

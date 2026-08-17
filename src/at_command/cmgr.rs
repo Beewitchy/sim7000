@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
 
 /// AT+CMGR=...
 #[derive(Debug)]
@@ -11,8 +11,9 @@ pub struct ReadSms {
 
 impl AtRequest for ReadSms {
     type Response = (SmsMessage, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CMGR={}\r", self.index)
+        write!(buf, "+CMGR={}", self.index)
     }
 }
 

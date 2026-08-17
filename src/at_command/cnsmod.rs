@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup, };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -28,17 +28,19 @@ pub struct SetAutoSystemMode(pub CNSMod);
 
 impl AtRequest for ShowSystemMode {
     type Response = (CNSMod, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNSMOD?\r")
+        write!(buf, "+CNSMOD?")
     }
 }
 
 impl AtRequest for SetAutoSystemMode {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "AT+CNSMOD={},{}\r",
+            "+CNSMOD={},{}",
             if self.0.enabled { '1' } else { '0' },
             self.0.system_mode as u8
         )

@@ -40,6 +40,7 @@ pub mod cipsend;
 pub mod cipshut;
 pub mod cipsprt;
 pub mod cipstart;
+pub mod clbs;
 pub mod cmee;
 pub mod cmgd;
 pub mod cmgf;
@@ -105,8 +106,6 @@ pub use cnsmod::{SetAutoSystemMode, ShowSystemMode};
 pub use cntp::{Execute, SynchronizeNetworkTime};
 pub use cntpcid::SetGprsBearerProfileId;
 pub use cops::{GetOperatorInfo, OperatorFormat, OperatorInfo, OperatorMode};
-pub use cpin::GetPinStatus;
-pub use cpowd::PowerDown;
 pub use cpsi::{GetSystemInfo, SystemInfo, SystemMode};
 pub use csclk::SetSlowClock;
 pub use cscs::{CharacterSet, SetTeCharacterSet};
@@ -149,26 +148,91 @@ pub(crate) trait AtParseLine: Sized {
     fn from_line(line: &str, _instant: &Instant) -> Result<Self, AtParseErr>;
 }
 
-#[cfg(feature = "defmt")]
-pub trait AtRequest: Debug + defmt::Format {
-    type Response;
-    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
-    fn timeout(&self) -> Option<Duration> {
-        Self::default_timeout()
+/// Used by [AtRequest] to define the command group for
+/// a request type.
+///
+/// The command group defines the prefix & end of line
+/// character that the command encoder will surround
+/// the request with
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommandGroup {
+    /// Commands prefixed with "AT".
+    ///
+    /// Typically these commands are a single letter long,
+    /// and have just a single parameter or no parameters.
+    ///
+    /// When added to a multi-command line, commands will
+    /// be appended without any separator.
+    ///
+    /// Currently this variant is also used for S Parameter
+    /// syntax commands.
+    Basic,
+    /// Commands prefixed with "AT", like basic commands.
+    ///
+    /// These commands have a "+" at the start of their
+    /// name, and may have multiple parameters after an
+    /// '=' delimiter, as well as additional status /
+    /// info response modes using the '?' suffix.
+    ///
+    /// When added to multi-command lines, they will be
+    /// delimited with a ';'.
+    Extended,
+    /// Contextual or mode changing commands, with no
+    /// prefix but still encoded with an end of line
+    /// character.
+    Context,
+    /// Use for non-command requests to prevent extra
+    /// formatting, including the end of line.
+    NonCommand,
+}
+
+/// Used by [AtRequest] to determine how a request
+/// should be encoded.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RequestType {
+    Command(CommandGroup),
+    /// Use for non-command requests to prevent extra formatting
+    NonCommand,
+    /// Special group signifying that a request contains
+    /// multiple commands that will be encoded to a single
+    /// line
+    Combined {
+        first: CommandGroup,
+        last: CommandGroup
+    },
+}
+
+impl RequestType {
+    pub const fn first_command(&self) -> &CommandGroup {
+        match self {
+            Self::Command(command_group) => command_group,
+            Self::NonCommand => &CommandGroup::NonCommand,
+            Self::Combined { first, last: _ } => first,
+        }
     }
-    fn default_timeout() -> Option<Duration> {
-        None
+
+    pub const fn last_command(&self) -> &CommandGroup {
+        match self {
+            Self::Command(command_group) => command_group,
+            Self::NonCommand => &CommandGroup::NonCommand,
+            Self::Combined { first: _, last } => last,
+        }
     }
 }
 
 /// Defines a request can be encoded and set to the modem,
 /// along with the expected response type.
-#[cfg(not(feature = "defmt"))]
-pub trait AtRequest: Debug {
+#[cfg(feature = "defmt")]
+pub trait AtRequest: Debug + defmt::Format {
     /// The expected response type for this request
     type Response;
+    /// The request type defines the prefix & end of line
+    /// character that the command encoder will surround
+    /// the request with
+    const TYPE: RequestType;
     /// Encode the request to bytes in the format that the
-    /// modem expects
+    /// modem expects, *not* including the AT+ prefix or
+    /// end-of-line character.
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
     /// Optional per-instance timeout for this request.
     ///
@@ -181,6 +245,19 @@ pub trait AtRequest: Debug {
     /// The default timeout for all instances of this type.
     /// Will be overridden by the value returned by
     /// [Self::timeout()] if that is implemented.
+    fn default_timeout() -> Option<Duration> {
+        None
+    }
+}
+
+#[cfg(not(feature = "defmt"))]
+pub trait AtRequest: Debug {
+    type Response;
+    const TYPE: RequestType;
+    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
+    fn timeout(&self) -> Option<Duration> {
+        Self::default_timeout()
+    }
     fn default_timeout() -> Option<Duration> {
         None
     }
@@ -392,6 +469,7 @@ pub enum ResponseCode {
     PdpNetworkActive(cnact::CNActPDP),
     NetworkApn(NetworkApn),
     NetworkTime(NetworkTime),
+    BaseStationLocation(clbs::LocationInfoResult),
     DownloadInfo(DownloadInfo),
     CopyResponse(CopyResponse),
     XtraStatus(XtraStatus),
@@ -443,6 +521,7 @@ impl AtParseLine for ResponseCode {
             .or_else(parse(line, instant, ResponseCode::PdpNetworkActive))
             .or_else(parse(line, instant, ResponseCode::NetworkApn))
             .or_else(parse(line, instant, ResponseCode::NetworkTime))
+            .or_else(parse(line, instant, ResponseCode::BaseStationLocation))
             .or_else(parse(line, instant, ResponseCode::DownloadInfo))
             .or_else(parse(line, instant, ResponseCode::CopyResponse))
             .or_else(parse(line, instant, ResponseCode::XtraStatus))

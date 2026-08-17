@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, GenericOk, RequestType, CommandGroup};
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -43,7 +43,11 @@ pub struct SetBaudRate(pub BaudRate);
 
 impl AtRequest for SetBaudRate {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+IPR={}\r", self.0 as u32)
+        write!(buf, "+IPR={}", self.0 as u32)
+    }
+    fn default_timeout() -> Option<embassy_time::Duration> {
+        Some(embassy_time::Duration::from_secs(30))
     }
 }

@@ -1,8 +1,7 @@
 use heapless::String;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, FwVersion, GenericOk, Imei, ResponseCode,
-    stub_parser_prefix,
+    AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, FwVersion, GenericOk, Imei, RequestType, ResponseCode, stub_parser_prefix,
 };
 
 /// ATI
@@ -19,8 +18,9 @@ impl AtRequest for GetProductInformation {
         ProductInfoImei,
         GenericOk,
     );
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+SIMCOMATI\r")
+        write!(buf, "+SIMCOMATI")
     }
 }
 

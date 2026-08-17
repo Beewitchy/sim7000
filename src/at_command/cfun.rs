@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// AT+CFUN arguments for both the set command and responses
 #[repr(u8)]
@@ -20,7 +20,7 @@ impl core::str::FromStr for Functionality {
         match s {
             "0" => Ok(Self::Minimal),
             "1" => Ok(Self::Full),
-            _ => Err("invalid data".into())
+            _ => Err("invalid data".into()),
         }
     }
 }
@@ -46,15 +46,15 @@ pub struct SetFunctionality(pub Functionality, pub Option<SetFunctionalityOption
 impl AtRequest for SetFunctionality {
     // The actual response is generated as an URC
     type Response = GenericOk;
-
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let fun = self.0 as u8;
         let rst = self.1;
         if let Some(rst) = rst {
             let rst = rst as u8;
-            write!(buf, "AT+CFUN={fun},{rst}\r")
+            write!(buf, "+CFUN={fun},{rst}")
         } else {
-            write!(buf, "AT+CFUN={fun}\r")
+            write!(buf, "+CFUN={fun}")
         }
     }
 }

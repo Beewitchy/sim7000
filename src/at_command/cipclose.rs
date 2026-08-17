@@ -1,4 +1,4 @@
-use super::{AtRequest, CloseOk};
+use super::{RequestType, CommandGroup, AtRequest, CloseOk};
 
 /// AT+CIPCLOSE=...
 #[derive(Debug)]
@@ -9,7 +9,8 @@ pub struct CloseConnection {
 
 impl AtRequest for CloseConnection {
     type Response = CloseOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CIPCLOSE={}\r", self.connection)
+        write!(buf, "+CIPCLOSE={}", self.connection)
     }
 }

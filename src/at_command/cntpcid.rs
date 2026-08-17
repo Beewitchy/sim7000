@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// AT+CNTPCID=...
 #[derive(Debug)]
@@ -7,7 +7,8 @@ pub struct SetGprsBearerProfileId(pub u8);
 
 impl AtRequest for SetGprsBearerProfileId {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CNTPCID={}\r", self.0)
+        write!(buf, "+CNTPCID={}", self.0)
     }
 }

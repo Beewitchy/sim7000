@@ -1,6 +1,7 @@
 use crate::util::collect_array;
 
 use super::{
+    RequestType, CommandGroup,
     AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, MetaResponse, ResponseCode, cclk,
     cgnscold::XtraStatus,
 };
@@ -32,8 +33,9 @@ pub struct GnssXtra(pub ToggleXtra);
 
 impl AtRequest for GnssXtra {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSXTRA={}\r", self.0 as u8)
+        write!(buf, "+CGNSXTRA={}", self.0 as u8)
     }
 }
 
@@ -57,15 +59,17 @@ pub struct GnssXtraInfo {
 
 impl AtRequest for GetGnssXtra {
     type Response = (MetaResponse<XtraStatus, ToggleXtra>, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSXTRA?\r")
+        write!(buf, "+CGNSXTRA?")
     }
 }
 
 impl AtRequest for ValidateGnssXtra {
     type Response = (Result<GnssXtraInfo, XtraStatus>, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CGNSXTRA\r")
+        write!(buf, "+CGNSXTRA")
     }
 }
 

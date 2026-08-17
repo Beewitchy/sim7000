@@ -1,7 +1,7 @@
 use crate::log;
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, plmn};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode, plmn};
 
 /// AT+CPSI?
 #[derive(Debug)]
@@ -10,8 +10,9 @@ pub struct GetSystemInfo;
 
 impl AtRequest for GetSystemInfo {
     type Response = (SystemInfo, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+CPSI?\r")
+        write!(buf, "+CPSI?")
     }
 }
 

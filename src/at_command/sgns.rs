@@ -4,7 +4,7 @@ use defmt::bitflags;
 use bitflags::bitflags;
 use embassy_time::Duration;
 
-use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, SimError};
+use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, SimError, RequestType, CommandGroup};
 use crate::collect_array;
 
 /// Options for NMEA output
@@ -132,32 +132,33 @@ pub enum ConfigureGnss {
 
 impl AtRequest for ConfigureGnss {
     type Response = Result<GenericOk, SimError>;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         match self {
             Self::NmeaOutPort(NmeaOutputPort::Uart(baudrate)) => write!(
                 buf,
-                "AT+SGNSCFG=\"NMEAOUTPORT\",{},{}\r",
+                "+SGNSCFG=\"NMEAOUTPORT\",{},{}",
                 NmeaOutputPort::Uart(UartBaudRate::_9600).id(),
                 baudrate.into_hz()
             ),
-            Self::NmeaOutPort(port) => write!(buf, "AT+SGNSCFG=\"NMEAOUTPORT\",{}\r", port.id()),
+            Self::NmeaOutPort(port) => write!(buf, "+SGNSCFG=\"NMEAOUTPORT\",{}", port.id()),
             Self::NmeaType(nmea_type) => {
-                write!(buf, "AT+SGNSCFG=\"NMEATYPE\",{}\r", nmea_type.bits())
+                write!(buf, "+SGNSCFG=\"NMEATYPE\",{}", nmea_type.bits())
             }
-            Self::UrcOutputOn(false) => write!(buf, "AT+SGNSCFG=\"OUTURC\",0\r"),
-            Self::UrcOutputOn(true) => write!(buf, "AT+SGNSCFG=\"OUTURC\",1\r"),
+            Self::UrcOutputOn(false) => write!(buf, "+SGNSCFG=\"OUTURC\",0"),
+            Self::UrcOutputOn(true) => write!(buf, "+SGNSCFG=\"OUTURC\",1"),
             Self::AssistanceData(adss_mode) => {
-                write!(buf, "AT+SGNSCFG=\"ADSS\",{}\r", *adss_mode as u8)
+                write!(buf, "+SGNSCFG=\"ADSS\",{}", *adss_mode as u8)
             }
-            Self::Mode(mode) => write!(buf, "AT+SGNSCFG=\"MODE\",{}\r", *mode as u8),
-            Self::Threshold(threshold) => write!(buf, "AT+SGNSCFG=\"THRESHOLD\",{}\r", *threshold),
+            Self::Mode(mode) => write!(buf, "+SGNSCFG=\"MODE\",{}", *mode as u8),
+            Self::Threshold(threshold) => write!(buf, "+SGNSCFG=\"THRESHOLD\",{}", *threshold),
             Self::Timeout(duration) => write!(
                 buf,
-                "AT+SGNSCFG=\"TIMEOUT\",{}\r",
+                "+SGNSCFG=\"TIMEOUT\",{}",
                 duration.as_millis().clamp(10_000, 180_000)
             ),
-            Self::GetExtraInfo(false) => write!(buf, "AT+SGNSCFG=\"EXTRAINFO\",0\r"),
-            Self::GetExtraInfo(true) => write!(buf, "AT+SGNSCFG=\"EXTRAINFO\",1\r"),
+            Self::GetExtraInfo(false) => write!(buf, "+SGNSCFG=\"EXTRAINFO\",0"),
+            Self::GetExtraInfo(true) => write!(buf, "+SGNSCFG=\"EXTRAINFO\",1"),
         }
     }
 }
@@ -208,10 +209,11 @@ pub enum GnssCommand {
 
 impl AtRequest for GnssCommand {
     type Response = Result<GenericOk, Error>;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         match self {
-            Self::Off => write!(buf, "AT+SGNSCMD=0\r"),
-            Self::Once(power_level) => write!(buf, "AT+SGNSCMD=1,{}\r", *power_level as u8),
+            Self::Off => write!(buf, "+SGNSCMD=0"),
+            Self::Once(power_level) => write!(buf, "+SGNSCMD=1,{}", *power_level as u8),
             Self::Auto {
                 min_interval,
                 min_distance_meters,
@@ -219,7 +221,7 @@ impl AtRequest for GnssCommand {
             } => {
                 write!(
                     buf,
-                    "AT+SGNSCMD=2,{},{},{}\r",
+                    "+SGNSCMD=2,{},{},{}",
                     min_interval.as_millis().clamp(1_000, 60_000),
                     (*min_distance_meters).min(1_000),
                     *accuracy as u8

@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, GenericOk, RequestType, CommandGroup};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -32,6 +32,7 @@ pub struct BearerSettings {
 
 impl AtRequest for BearerSettings {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let con_param_type = match self.con_param_type {
             ConParamType::Apn => "APN",
@@ -40,10 +41,10 @@ impl AtRequest for BearerSettings {
         };
 
         match self.cmd_type {
-            CmdType::OpenBearer => write!(buf, "AT+SAPBR={},1\r", self.cmd_type as u8),
+            CmdType::OpenBearer => write!(buf, "+SAPBR={},1", self.cmd_type as u8),
             CmdType::SetBearerParameters => write!(
                 buf,
-                "AT+SAPBR={},1,\"{}\",\"{}\"\r",
+                "+SAPBR={},1,\"{}\",\"{}\"",
                 self.cmd_type as u8, con_param_type, self.apn.as_str()
             ),
             _ => Err(core::fmt::Error::default()),

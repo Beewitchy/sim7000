@@ -34,7 +34,6 @@ log = ["dep:log", "dep:kinded"]
 defmt = ["dep:defmt", "dep:kinded", "embassy-time/defmt", "embassy-sync/defmt", "heapless/defmt", "chrono?/defmt"]
 chrono = ["dep:chrono"]
 nightly = ["heapless/nightly"]
-portable-atomic = ["heapless/portable-atomic"]
 
 [dev-dependencies]
 embassy-executor = { version = "0.10.0", features = ["platform-std", "executor-thread"] }

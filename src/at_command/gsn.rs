@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup};
 
 /// AT+GSN
 #[derive(Debug)]
@@ -9,8 +9,9 @@ pub struct GetImei;
 
 impl AtRequest for GetImei {
     type Response = (Imei, GenericOk);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+GSN\r")
+        write!(buf, "+GSN")
     }
 }
 

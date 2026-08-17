@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,8 +34,9 @@ pub struct DownloadToFileSystem {
 
 impl AtRequest for DownloadToFileSystem {
     type Response = (GenericOk, DownloadInfo);
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "AT+HTTPTOFS=\"{}\",\"{}\"", self.url, self.file_path)?;
+        write!(buf, "+HTTPTOFS=\"{}\",\"{}\"", self.url, self.file_path)?;
         if let Some(timeout) = self.timeout {
             write!(buf, ",{}", timeout)?;
         }
@@ -45,7 +46,7 @@ impl AtRequest for DownloadToFileSystem {
             }
             write!(buf, ",{}", retry_count)?;
         }
-        write!(buf, "\r")
+        Ok(())
     }
     fn timeout(&self) -> Option<embassy_time::Duration> {
         let retry_count = self.retry_count.unwrap_or_default() as u64;

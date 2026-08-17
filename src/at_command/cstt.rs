@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtRequest, GenericOk};
+use super::{AtRequest, GenericOk, RequestType, CommandGroup};
 
 /// AT+CSTT=...
 #[derive(Debug)]
@@ -14,17 +14,18 @@ pub struct StartTask {
 
 impl AtRequest for StartTask {
     type Response = GenericOk;
+    const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if !self.username.is_empty() || !self.password.is_empty() {
             write!(
                 buf,
-                "AT+CSTT=\"{}\",\"{}\",\"{}\"\r",
+                "+CSTT=\"{}\",\"{}\",\"{}\"",
                 self.apn.as_str(), self.username.as_str(), self.password.as_str(),
             )
         } else {
             write!(
                 buf,
-                "AT+CSTT=\"{}\"\r",
+                "+CSTT=\"{}\"",
                 self.apn.as_str(),
             )
         }
