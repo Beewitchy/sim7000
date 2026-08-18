@@ -15,7 +15,7 @@ use heapless::Vec;
 use crate::{
     BuildIo, BuildIoConfig, Error, PowerState, SplitIo, StateSignal,
     at_command::{
-        AtParseErr, AtParseLine, ResponseCode, cfun,
+        AtParseErr, AtParseLine, cfun,
         unsolicited::{
             self, GnssReport, NetworkRegistration, PowerDown, RegistrationStatus, Urc,
             VoltageWarning,
@@ -49,22 +49,10 @@ pub trait Pump {
     fn pump(&mut self) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
-#[derive(Clone)]
-pub struct RxLine {
-    line: heapless::String<599>,
-    views: usize,
-}
-
-impl RxLine {
-    pub const fn new() -> Self {
-        Self { line: heapless::String::new(), views: 0 }
-    }
-}
-
-pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
+pub struct RxPump<'context, P: PacketRef + Clone, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) reader: ModemReader<'context, M>,
-    pub(crate) generic_response: ZerocopySender<'context, M, ResponseCode>,
-    // pub(crate) lines_sender: ZerocopySender<'context, M, RxLine>,
+    pub(crate) generic_response: ZerocopySender<'context, M>,
+    pub(crate) packets: embassy_sync::pubsub::SendDynPublisher<'context, Packet<P>>,
     pub(crate) tcp: &'context TcpContext<M, TCP_SLOTS>,
     pub(crate) gnss: &'context Signal<M, GnssReport>,
     pub(crate) voltage_warning: &'context Signal<M, VoltageWarning>,
@@ -76,7 +64,7 @@ pub struct RxPump<'context, M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) active_signal: PowerSignalListener<'context, M>,
 }
 
-impl<'context, M: RawMutex, const TCP_SLOTS: usize> RxPump<'context, M, TCP_SLOTS> {
+impl<'context, P: PacketRef + Clone, M: RawMutex, const TCP_SLOTS: usize> RxPump<'context, P, M, TCP_SLOTS> {
     /// Reset status that is no longer valid after power down
     pub fn clear_online_status(&mut self, new_state: PowerState) {
         if matches!(new_state, PowerState::Sleeping | PowerState::Off) {
@@ -91,8 +79,9 @@ impl<'context, M: RawMutex, const TCP_SLOTS: usize> RxPump<'context, M, TCP_SLOT
     }
 }
 
-impl<'context, M, const TCP_SLOTS: usize> Pump for RxPump<'context, M, TCP_SLOTS>
+impl<'context, P, M, const TCP_SLOTS: usize> Pump for RxPump<'context, P, M, TCP_SLOTS>
 where
+    P: PacketRef + Clone,
     M: RawMutex,
 {
     type Err = Error;

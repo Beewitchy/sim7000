@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 
 use crate::parse_hex_or_dec::ParseHexOrDec as _;
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// AT+CCLK
 #[derive(Debug)]
@@ -47,18 +47,6 @@ impl AtParseLine for CclkTime {
             time,
             instant: *instant,
         })
-    }
-}
-
-impl AtResponse for CclkTime {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CclkTime;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::CclkTime(time) => Some(time),
-            _ => None,
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup};
+use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup};
 
 /// AT+GSN
 #[derive(Debug)]
@@ -77,18 +77,6 @@ fn calculate_check_digit(imei: &str) -> u8 {
         .sum();
 
     ((10 - (sum % 10)) % 10) as u8
-}
-
-impl AtResponse for Imei {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Imei;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::Imei(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

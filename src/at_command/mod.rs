@@ -1,14 +1,16 @@
 use core::{
-    fmt::Debug, marker::PhantomData, num::{ParseFloatError, ParseIntError}
+    fmt::Debug,
+    marker::PhantomData,
+    num::{ParseFloatError, ParseIntError},
 };
-use embassy_time::{Instant, Duration};
+use embassy_time::{Duration, Instant};
 
 pub mod generic_response;
-pub mod unsolicited;
 pub mod plmn;
+pub mod unsolicited;
 
 use cmgr::SmsMessage;
-pub use generic_response::{CloseOk, GenericOk, SimError, WritePrompt};
+pub use generic_response::{CloseOk, ShutOk, GenericOk, SimError, WritePrompt, SimResult};
 
 pub mod at;
 pub mod ate;
@@ -76,7 +78,6 @@ pub use ate::SetEcho;
 pub use ati::{ApRev, Csub, GetProductInformation, ProductInfoImei, QualityControlNumber};
 pub use cbatchk::EnableVBatCheck;
 pub use ccid::{Iccid, ShowIccid};
-use cclk::CclkTime;
 pub use cedrxs::{AcTType, ConfigureEDRX, EDRXSetting};
 pub use cfgri::{ConfigureRiPin, RiPinMode};
 pub use cgmr::{FwVersion, GetFwVersion};
@@ -117,10 +118,6 @@ pub use httptofs::DownloadToFileSystem;
 pub use ifc::{FlowControl, SetFlowControl};
 pub use ipr::{BaudRate, SetBaudRate};
 pub use sapbr::{BearerSettings, CmdType, ConParamType};
-
-use self::{
-    cgnscold::XtraStatus, cgnscpy::CopyResponse, cntp::NetworkTime, httptofs::DownloadInfo,
-};
 
 /// This error type is reported by [AtParseLine] (and related
 /// parsers) when no value is produced.
@@ -198,7 +195,7 @@ pub enum RequestType {
     /// line
     Combined {
         first: CommandGroup,
-        last: CommandGroup
+        last: CommandGroup,
     },
 }
 
@@ -265,12 +262,12 @@ pub trait AtRequest: Debug {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Either<T1: AtResponse + Clone, T2: AtResponse + Clone> {
+pub enum Either<T1: Clone, T2: Clone> {
     T1(T1),
     T2(T2),
 }
 
-impl<T1: AtResponse + Clone, T2: AtResponse + Clone> From<Result<T1, T2>> for Either<T1, T2> {
+impl<T1: Clone, T2: Clone> From<Result<T1, T2>> for Either<T1, T2> {
     fn from(value: Result<T1, T2>) -> Self {
         match value {
             Ok(val) => Self::T1(val),
@@ -279,7 +276,7 @@ impl<T1: AtResponse + Clone, T2: AtResponse + Clone> From<Result<T1, T2>> for Ei
     }
 }
 
-impl<T: AtResponse + Clone, E: AtResponse + Clone> From<Either<T, E>> for Result<T, E> {
+impl<T: Clone, E: Clone> From<Either<T, E>> for Result<T, E> {
     fn from(value: Either<T, E>) -> Self {
         match value {
             Either::T1(val) => Ok(val),
@@ -290,14 +287,12 @@ impl<T: AtResponse + Clone, E: AtResponse + Clone> From<Either<T, E>> for Result
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Seq<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone>(
+pub struct Seq<T: Clone, const N: usize>(
     pub heapless::Vec<T, N>,
-    pub DoneT,
 );
 
-// todo: ellie (20.05.2026) - Custom iterator returning the DoneT value after the sequence
-impl<T: AtResponse + Clone, const N: usize, DoneT: AtResponse + Clone> IntoIterator
-    for Seq<T, N, DoneT>
+impl<T: Clone, const N: usize> IntoIterator
+    for Seq<T, N>
 {
     type Item = <heapless::Vec<T, N> as IntoIterator>::Item;
     type IntoIter = <heapless::Vec<T, N> as IntoIterator>::IntoIter;
@@ -433,116 +428,36 @@ impl<T, U> AsMut<U> for MetaResponse<T, U> {
     }
 }
 
-pub trait AtResponse: Sized {
-    #[cfg(any(feature = "defmt", feature = "log"))]
-    const RESPONSE_KIND: ResponseCodeKind;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self>;
-    fn default_timeout() -> Option<Duration> {
-        None
-    }
+pub trait MatchToken<R = Self> {
+    type Token;
+    fn match_token(line: &str) -> Option<(Self::Token, &str)>;
 }
 
-/// Sim7000 AT-command response code
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(any(feature = "defmt", feature = "log"), derive(kinded::Kinded))]
-#[cfg_attr(feature = "defmt", kinded(derive(defmt::Format)))]
-pub enum ResponseCode {
-    Ok(GenericOk),
-    Error(SimError),
-    WritePrompt(WritePrompt), // "> "
-    CloseOk(CloseOk),
-    IpExt(IpExt),
-    Iccid(Iccid),
-    SignalQuality(SignalQuality),
-    CPin(unsolicited::CPin),
-    SystemInfo(SystemInfo),
-    OperatorInfo(OperatorInfo),
-    FwVersion(FwVersion),
-    Csub(Csub),
-    ApRev(ApRev),
-    QualityControlNumber(QualityControlNumber),
-    ProductInfoImei(ProductInfoImei),
-    ConfigureEDRX(ConfigureEDRX),
-    CNSMod(cnsmod::CNSMod),
-    PdpContextActivation(cgact::CGact),
-    PdpNetworkActive(cnact::CNActPDP),
-    NetworkApn(NetworkApn),
-    NetworkTime(NetworkTime),
-    BaseStationLocation(clbs::LocationInfoResult),
-    DownloadInfo(DownloadInfo),
-    CopyResponse(CopyResponse),
-    XtraStatus(XtraStatus),
-    XtraInfo(cgnsxtra::GnssXtraInfo),
-    GnssWorkModeSet(Option<cgnsmod::GnssWorkModeSet>),
-    GnssReport(cgnsinf::GnssReport),
-    PowerDown(unsolicited::PowerDown),
-    Imei(Imei),
-    SmsMessageFormat(SmsMessageFormat),
-    MessageReference(MessageReference),
-    SmsMessage(SmsMessage),
-    CclkTime(CclkTime),
-}
-
-impl AtParseLine for ResponseCode {
-    fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
-        /// Returns a function that tries to parse the line into a ResponseCode::T
-        fn parse<'a, T: AtParseLine>(
-            line: &'a str,
-            instant: &'a embassy_time::Instant,
-            f: impl Fn(T) -> ResponseCode + 'a,
-        ) -> impl Fn() -> Option<Result<ResponseCode, AtParseErr>> + 'a {
-            move || match T::from_line(line, instant) {
-                Err(AtParseErr::Mismatch) => None,
-                Err(err) => Some(Err(err)),
-                Ok(response) => Some(Ok(f(response))),
-            }
-        }
-
-        None
-            .or_else(parse(line, instant, ResponseCode::Ok))
-            .or_else(parse(line, instant, ResponseCode::Error))
-            .or_else(parse(line, instant, ResponseCode::WritePrompt))
-            .or_else(parse(line, instant, ResponseCode::CloseOk))
-            .or_else(parse(line, instant, ResponseCode::IpExt))
-            .or_else(parse(line, instant, ResponseCode::Iccid))
-            .or_else(parse(line, instant, ResponseCode::SignalQuality))
-            .or_else(parse(line, instant, ResponseCode::CPin))
-            .or_else(parse(line, instant, ResponseCode::SystemInfo))
-            .or_else(parse(line, instant, ResponseCode::OperatorInfo))
-            .or_else(parse(line, instant, ResponseCode::FwVersion))
-            .or_else(parse(line, instant, ResponseCode::Csub))
-            .or_else(parse(line, instant, ResponseCode::ApRev))
-            .or_else(parse(line, instant, ResponseCode::QualityControlNumber))
-            .or_else(parse(line, instant, ResponseCode::ProductInfoImei))
-            .or_else(parse(line, instant, ResponseCode::ConfigureEDRX))
-            .or_else(parse(line, instant, ResponseCode::CNSMod))
-            .or_else(parse(line, instant, ResponseCode::PdpContextActivation))
-            .or_else(parse(line, instant, ResponseCode::PdpNetworkActive))
-            .or_else(parse(line, instant, ResponseCode::NetworkApn))
-            .or_else(parse(line, instant, ResponseCode::NetworkTime))
-            .or_else(parse(line, instant, ResponseCode::BaseStationLocation))
-            .or_else(parse(line, instant, ResponseCode::DownloadInfo))
-            .or_else(parse(line, instant, ResponseCode::CopyResponse))
-            .or_else(parse(line, instant, ResponseCode::XtraStatus))
-            .or_else(parse(line, instant, ResponseCode::XtraInfo))
-            .or_else(parse(line, instant, ResponseCode::GnssWorkModeSet))
-            .or_else(parse(line, instant, ResponseCode::GnssReport))
-            .or_else(parse(line, instant, ResponseCode::CclkTime))
-            .or_else(parse(line, instant, ResponseCode::PowerDown))
-            // Imei is weird and may not be unambiguously parsed.
-            // Take care if trying to implement other, similar, response codes.
-            .or_else(parse(line, instant, ResponseCode::Imei))
-            .or_else(parse(line, instant, ResponseCode::SmsMessageFormat))
-            .or_else(parse(line, instant, ResponseCode::MessageReference))
-            // .or_else(parse(line, instant, ResponseCode::SmsInfo))
-            // Like the Imei, this one is weird and can't be unambiguously
-            // parsed (since it is human input), with the current setup.
-            // Anyways, let's have this at the bottom, that way we can catch
-            // any other response codes before this one.
-            .or_else(parse(line, instant, ResponseCode::SmsMessage))
-            .unwrap_or(Err(AtParseErr::Mismatch))
-    }
+pub trait ParseResult {
+    /// The type of the response(s) to be parsed
+    type Response;
+    /// The successful output type, typically combining the
+    /// data from [Self::Response] + [Self::Done].
+    type Output;
+    /// The type of token that signifies the end of the response(s)
+    type Done: MatchToken;
+    /// The error type & token
+    ///
+    /// Unlike the [Self::Output]/[Self::Done] combo, there is
+    /// only one type for both the token parser and the final
+    /// error because all currently supported error types are
+    /// standalone rather than being combined with separate
+    /// parsed data.
+    type Error: MatchToken;
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr>;
+    fn compose_result(
+        response: Self::Response,
+        done_token: <Self::Done as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Output, Self::Response>;
 }
 
 impl From<&'static str> for AtParseErr {
@@ -565,5 +480,7 @@ impl From<ParseFloatError> for AtParseErr {
 
 /// Stub AT response parser that just checks if the line starts with `prefix`
 fn stub_parser_prefix<T>(line: &str, prefix: &'static str, t: T) -> Result<T, AtParseErr> {
-    line.starts_with(prefix).then(|| t).ok_or(AtParseErr::Mismatch)
+    line.starts_with(prefix)
+        .then(|| t)
+        .ok_or(AtParseErr::Mismatch)
 }

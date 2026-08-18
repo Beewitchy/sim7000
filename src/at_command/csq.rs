@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup};
+use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup};
 
 /// AT+CSQ
 #[derive(Debug)]
@@ -65,17 +65,5 @@ impl AtParseLine for SignalQuality {
             rssi,
             signal_quality,
         })
-    }
-}
-
-impl AtResponse for SignalQuality {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SignalQuality;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::SignalQuality(sq) => Some(sq),
-            _ => None,
-        }
     }
 }

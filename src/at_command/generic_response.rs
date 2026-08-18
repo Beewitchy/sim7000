@@ -1,13 +1,15 @@
-use super::{AtParseErr, AtParseLine, AtResponse, ResponseCode};
+use super::{AtParseErr, AtParseLine, MatchToken, ParseResult};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GenericOk;
+pub struct GenericOk<Response = ()>(pub Response);
 
 #[derive(Clone, Copy, Debug)]
 pub enum SimError {
-    /// Generic error
-    Generic,
+    /// Error reported by the adaptor's command interface,
+    /// typically due to incorrect arguments or trying to use
+    /// a command in an invalid state.
+    Command,
 
     /// Error relating to mobile equipment or to the network.
     CmeErr { code: u32 },
@@ -26,30 +28,74 @@ pub struct CloseOk {
     pub connection: usize,
 }
 
-impl AtParseLine for GenericOk {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        // TODO: SHUT OK should be seperate type
-        (line == "OK" || line == "SHUT OK")
-            .then(|| GenericOk)
-            .ok_or(AtParseErr::Mismatch)
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ShutOk;
+
+pub type SimResult<T> = Result<T, SimError>;
+
+impl<Response> MatchToken for GenericOk<Response> {
+    type Token = ();
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        (line == "OK").then_some(((), line))
     }
 }
 
-impl AtResponse for GenericOk {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Ok;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::Ok(ok) => Some(ok),
-            _ => None,
+enum SimErrorKind {
+    Command,
+    Cme,
+    Cms,
+}
+
+impl MatchToken for SimError {
+    type Token = SimErrorKind;
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        if let Some(code) = line.strip_prefix("+CME ERROR:") {
+            Some((SimErrorKind::Cme, code.trim_start()))
+        } else if let Some(code) = line.strip_prefix("+CMS ERROR:") {
+            Some((SimErrorKind::Cms, code.trim_start()))
+        } else if line == "ERROR" {
+            Some((SimErrorKind::Command, line))
+        } else {
+            None
         }
     }
 }
 
+impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
+    type Response = Response;
+    type Output = Response;
+    type Done = GenericOk<Response>;
+    type Error = SimError;
 
-impl AtParseLine for SimError {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        match error_token {
+            SimErrorKind::Command => Ok(SimError::Command),
+            SimErrorKind::Cme => Ok(SimError::CmeErr {
+                code: line.parse()?,
+            }),
+            SimErrorKind::Cms => Ok(SimError::CmsErr {
+                code: line.parse()?,
+            }),
+        }
+    }
+
+    fn compose_result(
+        response: Self::Response,
+        (): <Self::Done as MatchToken>::Token,
+        _: &str,
+    ) -> Result<Self::Output, Self::Response> {
+        Ok(response)
+    }
+}
+
+impl SimError {
+    pub fn from_str(line: &str) -> Result<Self, AtParseErr> {
         if let Some(code) = line.strip_prefix("+CME ERROR:") {
             Ok(SimError::CmeErr {
                 code: code.trim_start().parse()?,
@@ -59,7 +105,7 @@ impl AtParseLine for SimError {
                 code: code.trim_start().parse()?,
             })
         } else if line == "ERROR" {
-            Ok(SimError::Generic)
+            Ok(SimError::Command)
         } else {
             Err(AtParseErr::Mismatch)
         }
@@ -74,18 +120,6 @@ impl AtParseLine for WritePrompt {
     }
 }
 
-impl AtResponse for WritePrompt {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::WritePrompt;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::WritePrompt(prompt) => Some(prompt),
-            _ => None,
-        }
-    }
-}
-
 impl AtParseLine for CloseOk {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let connection = line
@@ -97,15 +131,11 @@ impl AtParseLine for CloseOk {
     }
 }
 
-impl AtResponse for CloseOk {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CloseOk;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::CloseOk(close_ok) => Some(close_ok),
-            _ => None,
-        }
+impl AtParseLine for ShutOk {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        (line == "SHUT OK")
+            .then(|| ShutOk)
+            .ok_or(AtParseErr::Mismatch)
     }
 }
 
@@ -229,7 +259,7 @@ impl defmt::Format for SimError {
                 795 => write!(fmt, "795: Param format invalid"),
                 796 => write!(fmt, "796: Get a null param"),
                 797 => write!(fmt, "797: CFUN state is 0 or 4"),
-                code @ _ => write!(fmt, "CME({=u32}) <unknown error>", *code)
+                code @ _ => write!(fmt, "CME({=u32}) <unknown error>", *code),
             },
             Self::CmsErr { code } => match code {
                 1 => write!(fmt, "1: Unassigned(unallocated) number"),
@@ -267,7 +297,10 @@ impl defmt::Format for SimError {
                 65 => write!(fmt, "65: Bearer service not implemented"),
                 68 => write!(fmt, "68: ACM equal or greater than ACM maximum"),
                 69 => write!(fmt, "69: Requested facility not implemented"),
-                70 => write!(fmt, "70: Only restricted digital information bearer capability is available"),
+                70 => write!(
+                    fmt,
+                    "70: Only restricted digital information bearer capability is available"
+                ),
                 79 => write!(fmt, "79: Service or option not implemented, unspecified"),
                 81 => write!(fmt, "81: Invalid transaction identifier value"),
                 87 => write!(fmt, "87: User not member of CUG"),
@@ -277,7 +310,10 @@ impl defmt::Format for SimError {
                 96 => write!(fmt, "96: Invalid mandatory information"),
                 97 => write!(fmt, "97: Message type non-existent or not implemented"),
                 98 => write!(fmt, "98: Message type not compatible with protocol state"),
-                99 => write!(fmt, "99: Information element non-existent or not implemented"),
+                99 => write!(
+                    fmt,
+                    "99: Information element non-existent or not implemented"
+                ),
                 100 => write!(fmt, "100: Conditional information element error"),
                 101 => write!(fmt, "101: Message not compatible with protocol"),
                 102 => write!(fmt, "102: Recovery on timer expiry"),
@@ -349,7 +385,10 @@ impl defmt::Format for SimError {
                 520 => write!(fmt, "520: Too many MO concatenated messages"),
                 521 => write!(fmt, "521: SMSAL not ready"),
                 522 => write!(fmt, "522: SMSAL no more service"),
-                523 => write!(fmt, "523: Not support TP-Status-Report & TP-Command in storage"),
+                523 => write!(
+                    fmt,
+                    "523: Not support TP-Status-Report & TP-Command in storage"
+                ),
                 524 => write!(fmt, "524: Reserved MTI"),
                 525 => write!(fmt, "525: No free entity in RL layer"),
                 526 => write!(fmt, "526: The port number is already registered"),
@@ -359,8 +398,8 @@ impl defmt::Format for SimError {
                 530 => write!(fmt, "530: GPRS is suspended"),
                 531 => write!(fmt, "531: ME storage full"),
                 532 => write!(fmt, "532: Doing SIM refresh"),
-                code @ _ => write!(fmt, "CMS({=u32}) <unknown error>", *code)
-            }
+                code @ _ => write!(fmt, "CMS({=u32}) <unknown error>", *code),
+            },
         }
     }
 }

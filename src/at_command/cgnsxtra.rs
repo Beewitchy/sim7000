@@ -2,7 +2,7 @@ use crate::util::collect_array;
 
 use super::{
     RequestType, CommandGroup,
-    AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, MetaResponse, ResponseCode, cclk,
+    AtParseErr, AtParseLine, AtRequest, GenericOk, MetaResponse, cclk,
     cgnscold::XtraStatus,
 };
 
@@ -108,18 +108,6 @@ fn parse_arguments(line: &str) -> Result<GnssXtraInfo, AtParseErr> {
         valid_duration_hours,
         download_time,
     })
-}
-
-impl AtResponse for GnssXtraInfo {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::XtraInfo;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::XtraInfo(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 impl AtParseLine for ToggleXtra {

@@ -1,6 +1,6 @@
 use crate::{error::Xtra, Error};
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CGNSCPY=...
 #[derive(Debug)]
@@ -41,18 +41,6 @@ impl AtParseLine for CopyResponse {
             "0" => Ok(CopyResponse::Success),
             "1" => Ok(CopyResponse::FileDoesntExist),
             _ => Err("Invalid response, expected 0 or 1".into()),
-        }
-    }
-}
-
-impl AtResponse for CopyResponse {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CopyResponse;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::CopyResponse(v) => Some(v),
-            _ => None,
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -113,17 +113,5 @@ impl AtParseLine for Option<GnssWorkModeSet> {
 impl AtParseLine for GnssWorkModeSet {
     fn from_line(line: &str, instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         Option::<GnssWorkModeSet>::from_line(line, instant).and_then(|set| set.ok_or("GPS disabled: match against Option<GnssWorkModeSet> instead to collect this result".into()))
-    }
-}
-
-impl AtResponse for Option<GnssWorkModeSet> {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::GnssWorkModeSet;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::GnssWorkModeSet(v) => Some(v),
-            _ => None,
-        }
     }
 }

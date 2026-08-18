@@ -35,6 +35,8 @@ defmt = ["dep:defmt", "dep:kinded", "embassy-time/defmt", "embassy-sync/defmt", 
 chrono = ["dep:chrono"]
 nightly = ["heapless/nightly"]
 
+__trace_io = []
+
 [dev-dependencies]
 embassy-executor = { version = "0.10.0", features = ["platform-std", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["std"] }

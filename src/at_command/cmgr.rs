@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CMGR=...
 #[derive(Debug)]
@@ -38,16 +38,5 @@ impl AtParseLine for SmsMessage {
             sender: sender.trim_matches('\"').try_into().unwrap_or_default(),
             message: "".try_into().unwrap_or_default(),
         })
-    }
-}
-
-impl AtResponse for SmsMessage {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SmsMessage;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::SmsMessage(sms) => Some(sms),
-            _ => None,
-        }
     }
 }

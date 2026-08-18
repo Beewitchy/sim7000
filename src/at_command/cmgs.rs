@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, WritePrompt};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk, WritePrompt};
 
 /// AT+CMGS=...
 ///
@@ -48,15 +48,5 @@ impl AtParseLine for MessageReference {
         Ok(Self {
             value: rest.parse().map_err(|_| "Invalid message reference")?,
         })
-    }
-}
-
-impl AtResponse for MessageReference {
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::MessageReference;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::MessageReference(format) => Some(format),
-            _ => None,
-        }
     }
 }

@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, RequestType, CommandGroup, };
+use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup, };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -74,17 +74,5 @@ impl AtParseLine for CNSMod {
             enabled,
             system_mode,
         })
-    }
-}
-
-impl AtResponse for CNSMod {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::CNSMod;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::CNSMod(v) => Some(v),
-            _ => None,
-        }
     }
 }

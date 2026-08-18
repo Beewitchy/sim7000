@@ -307,43 +307,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
         }
 
         // Set up flow control, the modem does not save this state on reboot.
-        // We need to set it as fast as possible to avoid dropping bytes.
-        let flow_control_command: ifc::SetFlowControl = self.supported_flow_control.into();
-        for _ in 0..5 {
-            match with_timeout(
-                Duration::from_millis(2000),
-                commands.run((flow_control_command, ipr::SetBaudRate(self.max_baud_rate))),
-            )
-            .await
-            {
-                Ok(Ok((GenericOk, GenericOk))) => {
-                    self.context.io_config.sender().send(BuildIoConfig {
-                        baud_rate: self.max_baud_rate,
-                        flow_control: match self.supported_flow_control {
-                            EndpointFlowControlKind::Hardware => EndpointFlowControl::Hardware,
-                            EndpointFlowControlKind::Software => {
-                                EndpointFlowControl::Software { xoff: 19, xon: 17 }
-                            }
-                            EndpointFlowControlKind::None => EndpointFlowControl::None,
-                        },
-                    });
-                    break;
-                }
-                Ok(Err(Error::Serial))
-                | Ok(Err(Error::Transmit))
-                | Ok(Err(Error::UnknownResponse))
-                | Ok(Err(Error::BufferOverflow))
-                | Err(embassy_time::TimeoutError) => {
-                    self.context.io_config.sender().send(BuildIoConfig {
-                        baud_rate: BaudRate::Hz115200,
-                        flow_control: EndpointFlowControl::None,
-                    });
-                }
-                Ok(Err(_)) => {
-                    break;
-                }
-            }
-        }
+        self.configure_io(&mut commands).await?
 
         // todo: ellie (16.05.2026) - sleep & slow-clock configuration
         commands.run(csclk::SetSlowClock(false)).await?;
@@ -404,6 +368,46 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
 
         drop(commands);
 
+        Ok(())
+    }
+
+    async fn configure_io(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error> {
+        let flow_control_command: ifc::SetFlowControl = self.supported_flow_control.into();
+        for _ in 0..5 {
+            match with_timeout(
+                Duration::from_millis(2000),
+                commands.run((flow_control_command, ipr::SetBaudRate(self.max_baud_rate))),
+            )
+            .await
+            {
+                Ok(Ok(GenericOk)) => {
+                    self.context.io_config.sender().send(BuildIoConfig {
+                        baud_rate: self.max_baud_rate,
+                        flow_control: match self.supported_flow_control {
+                            EndpointFlowControlKind::Hardware => EndpointFlowControl::Hardware,
+                            EndpointFlowControlKind::Software => {
+                                EndpointFlowControl::Software { xoff: 19, xon: 17 }
+                            }
+                            EndpointFlowControlKind::None => EndpointFlowControl::None,
+                        },
+                    });
+                    break;
+                }
+                Ok(Err(Error::Serial))
+                | Ok(Err(Error::Transmit))
+                | Ok(Err(Error::UnknownResponse))
+                | Ok(Err(Error::BufferOverflow))
+                | Err(embassy_time::TimeoutError) => {
+                    self.context.io_config.sender().send(BuildIoConfig {
+                        baud_rate: BaudRate::Hz115200,
+                        flow_control: EndpointFlowControl::None,
+                    });
+                }
+                Ok(Err(_)) => {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 

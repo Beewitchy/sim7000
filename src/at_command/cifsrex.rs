@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CIFSREX
 #[derive(Debug)]
@@ -31,16 +31,5 @@ impl AtParseLine for IpExt {
             .ok_or("Failed to parse IP segment")?;
 
         Ok(IpExt { addr })
-    }
-}
-
-impl AtResponse for IpExt {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::IpExt;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::IpExt(ip_ext) => Some(ip_ext),
-            _ => None,
-        }
     }
 }

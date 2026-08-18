@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,18 +137,6 @@ impl AtParseLine for ConfigureEDRX {
             }
         }
         Ok(config)
-    }
-}
-
-impl AtResponse for ConfigureEDRX {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ConfigureEDRX;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::ConfigureEDRX(configure_edrx) => Some(configure_edrx),
-            _ => None,
-        }
     }
 }
 

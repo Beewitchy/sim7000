@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// AT+COPS?
 #[derive(Debug)]
@@ -77,17 +77,5 @@ impl AtParseLine for OperatorInfo {
             format,
             operator_name,
         })
-    }
-}
-
-impl AtResponse for OperatorInfo {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::OperatorInfo;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::OperatorInfo(info) => Some(info),
-            _ => None,
-        }
     }
 }

@@ -1,4 +1,4 @@
-use crate::at_command::{AtParseErr, AtParseLine, AtResponse, ResponseCode};
+use crate::at_command::{AtParseErr, AtParseLine};
 
 /// Indicates SIM status
 #[derive(Clone, Copy, Debug)]
@@ -21,17 +21,6 @@ impl AtParseLine for CPin {
             }
         } else {
             Err(AtParseErr::Mismatch)
-        }
-    }
-}
-
-impl AtResponse for CPin {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: crate::at_command::ResponseCodeKind = crate::at_command::ResponseCodeKind::CPin;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::CPin(v) => Some(v),
-            _ => None,
         }
     }
 }

@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CMGF=...
 #[derive(Debug)]
@@ -45,17 +45,6 @@ impl AtParseLine for SmsMessageFormat {
             "0" => Ok(SmsMessageFormat::Pdu),
             "1" => Ok(SmsMessageFormat::Text),
             _ => Err("Invalid SMS message format".into()),
-        }
-    }
-}
-
-impl AtResponse for SmsMessageFormat {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SmsMessageFormat;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::SmsMessageFormat(format) => Some(format),
-            _ => None,
         }
     }
 }

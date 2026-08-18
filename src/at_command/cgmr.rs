@@ -2,10 +2,7 @@ use core::str::FromStr;
 
 use heapless::String;
 
-use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType,
-    ResponseCode,
-};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
 
 /// Maximum version length that we can read.
 ///
@@ -59,18 +56,6 @@ impl AtParseLine for FwVersion {
         String::from_str(version)
             .map(Self)
             .map_err(|_| AtParseErr::from("Modem firmware version is too long"))
-    }
-}
-
-impl AtResponse for FwVersion {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::FwVersion;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::FwVersion(fw_version) => Some(fw_version),
-            _ => None,
-        }
     }
 }
 

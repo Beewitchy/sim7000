@@ -1,4 +1,4 @@
-use crate::at_command::{AtParseErr, AtParseLine, AtResponse, ResponseCode};
+use crate::at_command::{AtParseErr, AtParseLine};
 
 // stub type
 /// Network time zone
@@ -13,17 +13,6 @@ pub enum PowerDown {
 
     /// Chip automatically powered down due to over-voltage
     OverVoltage,
-}
-
-impl AtResponse for PowerDown {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: crate::at_command::ResponseCodeKind = crate::at_command::ResponseCodeKind::PowerDown;
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::PowerDown(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 impl AtParseLine for PowerDown {

@@ -3,9 +3,8 @@ use embassy_time::Instant;
 use crate::util::collect_array;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType,
-    ResponseCode,
-    cclk::{FromCclkStr as _, types::UtcDateTime},
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType,
+    cclk::{FromCclkStr as _, types::LocalDateTime},
 };
 
 /// AT+CLBS Base-station Location
@@ -71,7 +70,7 @@ pub enum LocationInfoResult {
     Location(LocationInfo),
     Full {
         location: LocationInfo,
-        date_time: UtcDateTime,
+        date_time: LocalDateTime,
         instant: Instant,
     },
     ReportOk,
@@ -119,7 +118,7 @@ impl AtParseLine for LocationInfoResult {
                     longitude: longitude.parse()?,
                     accuracy: accuracy.parse()?,
                 };
-                if let Some((date_time, rest)) = UtcDateTime::from_cclk_str(rest).ok() {
+                if let Some((date_time, rest)) = LocalDateTime::from_cclk_str(rest).ok() {
                     Ok(LocationInfoResult::Full {
                         location,
                         date_time,
@@ -133,18 +132,6 @@ impl AtParseLine for LocationInfoResult {
                 // This isn't included in the docs I have
                 Err("The paid service isn't supported by this crate yet.".into())
             }
-        }
-    }
-}
-
-impl AtResponse for LocationInfoResult {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::BaseStationLocation;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::BaseStationLocation(v) => Some(v),
-            _ => None,
         }
     }
 }
@@ -176,7 +163,7 @@ mod test {
                     longitude: 90.0,
                     accuracy: 5
                 },
-                date_time: UtcDateTime::from_cclk_str("2026/5/5,10:10:10")
+                date_time: LocalDateTime::from_cclk_str("2026/5/5,10:10:10")
                     .expect("simple cclk date-time should parse")
                     .0,
                 instant: now

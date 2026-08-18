@@ -1,7 +1,8 @@
 use heapless::String;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, FwVersion, GenericOk, Imei, RequestType, ResponseCode, stub_parser_prefix,
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, FwVersion, GenericOk, Imei,
+    RequestType, SimError, stub_parser_prefix,
 };
 
 /// ATI
@@ -10,14 +11,13 @@ use super::{
 pub struct GetProductInformation;
 
 impl AtRequest for GetProductInformation {
-    type Response = (
-        FwVersion,
-        Csub,
-        ApRev,
-        QualityControlNumber,
-        ProductInfoImei,
-        GenericOk,
-    );
+    type Response = Result<
+        GenericOk<(
+            ((FwVersion, (Csub, ApRev)), QualityControlNumber),
+            ProductInfoImei,
+        )>,
+        SimError,
+    >;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+SIMCOMATI")
@@ -29,72 +29,22 @@ impl AtRequest for GetProductInformation {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Csub(pub String<7>);
 
-impl AtResponse for Csub {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::Csub;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::Csub(v) => Some(v),
-            _ => None,
-        }
-    }
-}
-
 /// Ignored response--the value is just 'FwVersion,Csub'
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApRev;
 
-impl AtResponse for ApRev {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ApRev;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::ApRev(v) => Some(v),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct QualityControlNumber(pub String<24>);
-
-impl AtResponse for QualityControlNumber {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::QualityControlNumber;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::QualityControlNumber(v) => Some(v),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProductInfoImei(pub Imei);
 
-impl AtResponse for ProductInfoImei {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::ProductInfoImei;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::ProductInfoImei(v) => Some(v),
-            _ => None,
-        }
-    }
-}
-
 impl AtParseLine for Csub {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("CSUB:")
-            .ok_or(AtParseErr::Mismatch)?;
+        let line = line.strip_prefix("CSUB:").ok_or(AtParseErr::Mismatch)?;
         String::try_from(line)
             .map_err(|_| AtParseErr::from("Modem csub string is too long"))
             .map(Csub)
@@ -109,9 +59,7 @@ impl AtParseLine for ApRev {
 
 impl AtParseLine for QualityControlNumber {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("QCN:")
-            .ok_or(AtParseErr::Mismatch)?;
+        let line = line.strip_prefix("QCN:").ok_or(AtParseErr::Mismatch)?;
         String::try_from(line)
             .map_err(|_| AtParseErr::from("Modem qcn string is too long"))
             .map(QualityControlNumber)
@@ -120,9 +68,7 @@ impl AtParseLine for QualityControlNumber {
 
 impl AtParseLine for ProductInfoImei {
     fn from_line(line: &str, instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("IMEI:")
-            .ok_or(AtParseErr::Mismatch)?;
+        let line = line.strip_prefix("IMEI:").ok_or(AtParseErr::Mismatch)?;
         Imei::from_line(line, instant).map(ProductInfoImei)
     }
 }

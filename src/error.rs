@@ -1,6 +1,6 @@
 use embassy_time::TimeoutError;
 
-use crate::at_command::{httptofs::StatusCode, SimError};
+use crate::at_command::{SimError, httptofs::StatusCode};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -8,6 +8,7 @@ use crate::at_command::{httptofs::StatusCode, SimError};
 pub enum Error {
     InvalidUtf8,
     BufferOverflow,
+    OutOfPackets,
     Sim(SimError),
     Timeout,
     Serial,
@@ -24,7 +25,7 @@ pub enum Error {
     Xtra(Xtra),
 
     /// Context isn't fully initialized, or incorrectly set up
-    InvalidContext
+    InvalidContext,
 }
 
 #[derive(Debug)]
@@ -36,7 +37,7 @@ pub enum Xtra {
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "SIM7000 error {self:?}")
+        write!(f, "Modem driver error {self:?}")
     }
 }
 
@@ -46,17 +47,18 @@ impl embedded_io_async::Error for Error {
     fn kind(&self) -> embedded_io_async::ErrorKind {
         match self {
             Self::InvalidUtf8 => embedded_io_async::ErrorKind::InvalidData,
-            Self::BufferOverflow => embedded_io_async::ErrorKind::OutOfMemory,
-            Self::Sim(_) => embedded_io_async::ErrorKind::NotConnected,
-            Self::SimUnavailable => embedded_io_async::ErrorKind::NotConnected,
+            Self::BufferOverflow | Self::OutOfPackets => embedded_io_async::ErrorKind::OutOfMemory,
+            Self::Sim(_) | Self::SimUnavailable | Self::NoApn => {
+                embedded_io_async::ErrorKind::NotConnected
+            }
             Self::Timeout => embedded_io_async::ErrorKind::TimedOut,
             Self::Serial => embedded_io_async::ErrorKind::BrokenPipe,
-            Self::UnknownResponse => embedded_io_async::ErrorKind::Other,
-            Self::IncompatibleMapping => embedded_io_async::ErrorKind::Other,
-            Self::Transmit => embedded_io_async::ErrorKind::Interrupted,
-            Self::NoApn => embedded_io_async::ErrorKind::NotConnected,
-            Self::Httptofs(_) => embedded_io_async::ErrorKind::Interrupted,
-            Self::Xtra(_) => embedded_io_async::ErrorKind::Interrupted,
+            Self::UnknownResponse | Self::IncompatibleMapping => {
+                embedded_io_async::ErrorKind::Other
+            }
+            Self::Transmit | Self::Httptofs(_) | Self::Xtra(_) => {
+                embedded_io_async::ErrorKind::Interrupted
+            }
             Self::InvalidContext => embedded_io_async::ErrorKind::InvalidInput,
         }
     }

@@ -2,7 +2,7 @@ use heapless::String;
 
 use crate::{util::collect_array};
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, Seq};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk, Seq, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -36,7 +36,7 @@ pub struct SetAppNetwork {
 }
 
 impl AtRequest for SetAppNetwork {
-    type Response = GenericOk;
+    type Response = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT={},\"{}\"", self.mode as u8, self.apn)
@@ -57,7 +57,7 @@ pub struct CNActPDP {
 pub struct SetAppNetworkPDP(pub CNActPDP);
 
 impl AtRequest for SetAppNetworkPDP {
-    type Response = GenericOk;
+    type Response = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT={},{}", self.0.pdp_index, self.0.mode as u8)?;
@@ -74,7 +74,7 @@ impl AtRequest for SetAppNetworkPDP {
 pub struct GetAppNetworkPDP;
 
 impl AtRequest for GetAppNetworkPDP {
-    type Response = Seq<CNActPDP, 4, GenericOk>;
+    type Response = SimResult<GenericOk<Seq<CNActPDP, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT?")
@@ -97,17 +97,5 @@ impl AtParseLine for CNActPDP {
             mode,
             address,
         })
-    }
-}
-
-impl AtResponse for CNActPDP {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::PdpNetworkActive;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::PdpNetworkActive(v) => Some(v),
-            _ => None,
-        }
     }
 }

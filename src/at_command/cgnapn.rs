@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CGNAPN
 ///
@@ -45,18 +45,6 @@ impl AtParseLine for NetworkApn {
                 Ok(NetworkApn { apn: Some(apn) })
             }
             _ => Err("Invalid 'valid' field, expected 1 or 0".into()),
-        }
-    }
-}
-
-impl AtResponse for NetworkApn {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::NetworkApn;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::NetworkApn(v) => Some(v),
-            _ => None,
         }
     }
 }

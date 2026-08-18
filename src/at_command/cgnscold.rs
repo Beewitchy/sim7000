@@ -1,6 +1,6 @@
 use crate::{error::Xtra, Error};
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
 
 /// AT+CGNSCOLD
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl XtraStatus {
 }
 
 impl AtRequest for GnssColdStart {
-    type Response = (GenericOk, XtraStatus);
+    type Response = (GenericOk, Option<XtraStatus>);
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSCOLD")
@@ -45,7 +45,7 @@ impl AtRequest for GnssColdStart {
 }
 
 impl AtRequest for GnssWarmStart {
-    type Response = (GenericOk, XtraStatus);
+    type Response = GenericOk;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSWARM")
@@ -53,7 +53,7 @@ impl AtRequest for GnssWarmStart {
 }
 
 impl AtRequest for GnssHotStart {
-    type Response = (GenericOk, XtraStatus);
+    type Response = GenericOk;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSHOT")
@@ -71,18 +71,6 @@ impl AtParseLine for XtraStatus {
             "1" => Ok(XtraStatus::DoesntExist),
             "2" => Ok(XtraStatus::NotEffective),
             _ => Err("Invalid response, expected 0, 1 or 2".into()),
-        }
-    }
-}
-
-impl AtResponse for XtraStatus {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::XtraStatus;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::XtraStatus(v) => Some(v),
-            _ => None,
         }
     }
 }

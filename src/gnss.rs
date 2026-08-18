@@ -7,7 +7,7 @@ use crate::at_command::{cgnsinf, unsolicited};
 use crate::drop::{AsyncDrop, DropChannel, DropMessage};
 use crate::modem::CommandRunner;
 use crate::modem::power::PowerSignalListener;
-use crate::{PowerState, log};
+use crate::{PacketProvider, PowerState, log};
 
 pub const GNSS_SLOTS: usize = 1;
 
@@ -15,12 +15,12 @@ pub const GNSS_SLOTS: usize = 1;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Closed;
 
-pub struct Gnss<'x, 'c, M: RawMutex> {
+pub struct Gnss<'x, 'c, M: RawMutex, P: PacketProvider> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
     unsolicited_reports: Option<&'x Signal<M, unsolicited::GnssReport>>,
-    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
+    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, P>>,
     power_signal: PowerSignalListener<'x, M>,
     _drop: AsyncDrop<'x, M>,
 

@@ -1,8 +1,8 @@
 use core::str::FromStr as _;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, AtResponse, CnactMode, CommandGroup, GenericOk,
-    RequestType, ResponseCode, Seq,
+    AtParseErr, AtParseLine, AtRequest, CnactMode, CommandGroup, GenericOk,
+    RequestType, Seq, SimResult
 };
 
 /// AT+CGACT?
@@ -11,7 +11,7 @@ use super::{
 pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
-    type Response = Seq<CGact, 4, GenericOk>;
+    type Response = SimResult<GenericOk<Seq<CGact, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGACT?")
@@ -26,7 +26,7 @@ pub struct CGact {
 }
 
 impl AtRequest for CGact {
-    type Response = (heapless::Vec<CGact, 4>, GenericOk);
+    type Response = SimResult<GenericOk<Seq<CGact, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGACT={},{}", self.cid, self.state as u8)
@@ -49,17 +49,5 @@ impl AtParseLine for CGact {
             }
         }
         Ok(cgact)
-    }
-}
-
-impl AtResponse for CGact {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::PdpContextActivation;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::PdpContextActivation(v) => Some(v),
-            _ => None,
-        }
     }
 }

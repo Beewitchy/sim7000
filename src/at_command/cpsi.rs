@@ -1,7 +1,7 @@
 use crate::log;
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, AtResponse, CommandGroup, GenericOk, RequestType, ResponseCode, plmn};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, plmn};
 
 /// AT+CPSI?
 #[derive(Debug)]
@@ -334,18 +334,6 @@ impl AtParseLine for SystemInfo {
                     system_mode_parameters: SystemModeParameters::LteNbIot(LteModeParameters::default()),
                 }
             })
-        }
-    }
-}
-
-impl AtResponse for SystemInfo {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::SystemInfo;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::SystemInfo(v) => Some(v),
-            _ => None,
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, AtResponse, GenericOk, ResponseCode, cclk};
+use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk, cclk};
 
 use embassy_time::Instant;
 
@@ -122,18 +122,6 @@ impl AtParseLine for GnssReport {
             }
         } else {
             Ok(Self::NotEnabled)
-        }
-    }
-}
-
-impl AtResponse for GnssReport {
-    #[cfg(any(feature = "log", feature = "defmt"))]
-    const RESPONSE_KIND: super::ResponseCodeKind = super::ResponseCodeKind::GnssReport;
-    #[inline]
-    fn from_generic(code: &mut ResponseCode) -> Option<&mut Self> {
-        match code {
-            ResponseCode::GnssReport(v) => Some(v),
-            _ => None,
         }
     }
 }

@@ -54,7 +54,7 @@ where
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "__trace_io")]
             if !self.buffer.is_empty() {
                 match from_utf8(&self.buffer) {
                     Ok(line) => log::trace!("CURRENT BUFFER (utf-8) {:?}", line),

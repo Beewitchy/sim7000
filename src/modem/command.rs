@@ -1,17 +1,14 @@
-use core::{cmp::min, future::Future, marker::PhantomData, mem::ManuallyDrop};
+use core::{cmp::min, fmt::Write, future::Future, marker::PhantomData, mem::ManuallyDrop};
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex,
-    zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
+    blocking_mutex::raw::RawMutex, pubsub::{SendDynPublisher, SendDynSubscriber}, zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
 };
 use embassy_time::{Duration, Instant, with_deadline};
 use heapless::{String, Vec, string::StringView};
 
 use crate::{
-    Error,
-    at_command::{
-        AtRequest, AtResponse, CommandGroup, Either, MetaResponse, RequestType, ResponseCode, Seq,
-    },
-    log,
+    Error, PacketProvider, at_command::{
+        AtRequest, CommandGroup, Either, GenericOk, MatchToken, MetaResponse, ParseResult, RequestType, Seq,
+    }, log, PacketStorage,
 };
 
 /// The default timeout of AT commands
@@ -20,87 +17,40 @@ pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_COMMAND_LEN: usize = 599;
 
 #[derive(Clone)]
-pub struct RawAtCommand {
-    pub(crate) bytes: Vec<u8, { MAX_COMMAND_LEN + 1 }>,
-    pub(crate) binary: bool,
+pub struct CommandPacket<S: PacketStorage> {
+    storage: S,
+    len: usize,
 }
 
-impl core::fmt::Write for RawAtCommand {
+impl<'r, S: PacketStorage> Write for CommandPacket<'r, S> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.binary = false;
-        self.bytes
-            .extend_from_slice(s.as_bytes())
-            .map_err(|_| core::fmt::Error)
-    }
-}
-
-impl core::iter::Extend<u8> for RawAtCommand {
-    fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
-        self.binary = true;
-        self.bytes.extend(iter)
-    }
-}
-
-impl<'a> core::iter::Extend<&'a u8> for RawAtCommand {
-    fn extend<T: IntoIterator<Item = &'a u8>>(&mut self, iter: T) {
-        self.binary = true;
-        self.bytes.extend(iter.into_iter().cloned())
-    }
-}
-
-impl From<String<{ MAX_COMMAND_LEN + 1 }>> for RawAtCommand {
-    fn from(s: String<{ MAX_COMMAND_LEN + 1 }>) -> Self {
-        RawAtCommand {
-            bytes: s.into_bytes(),
-            binary: false,
+        let mut data = self.storage.borrow_data_mut();
+        let data: &mut [u8] = data.as_mut();
+        if let Some(len) = self.len.checked_add(s.len()) && len < data.len() {
+            let start = self.len;
+            self.len = len;
+            data[start..len].copy_from_slice(s.as_bytes());
+            Ok(())
+        } else {
+            Err(core::fmt::Error)
         }
     }
 }
 
-impl TryFrom<&StringView> for RawAtCommand {
-    type Error = Error;
-
-    fn try_from(value: &StringView) -> Result<Self, Self::Error> {
-        Ok(RawAtCommand {
-            bytes: Vec::from_slice(value.as_bytes()).map_err(|_| Error::BufferOverflow)?,
-            binary: false,
-        })
-    }
-}
-
-impl From<&'_ str> for RawAtCommand {
-    fn from(s: &'_ str) -> Self {
-        RawAtCommand {
-            bytes: s.as_bytes().try_into().unwrap_or_default(),
-            binary: false,
-        }
-    }
-}
-
-impl From<&'_ [u8]> for RawAtCommand {
-    fn from(s: &'_ [u8]) -> Self {
-        RawAtCommand {
-            bytes: s.try_into().unwrap_or_default(),
-            binary: true,
-        }
-    }
-}
-
-impl RawAtCommand {
-    pub const fn new() -> Self {
+impl<'r, S: PacketStorage> CommandPacket<'r, S> {
+    pub const fn new(storage: &'r S) -> Self {
         Self {
-            bytes: Vec::new(),
-            binary: false,
+            storage,
+            len: 0,
         }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes.as_slice()
+        &self.storage.borrow_data().as_ref()
     }
 
     pub fn clear(&mut self) {
-        self.binary = false;
-        self.bytes.clear()
+        self.len = 0;
     }
 
     pub fn capacity(&self) -> usize {
@@ -145,7 +95,7 @@ struct WithTimeout<Request> {
 impl<Request: AtRequest> AtRequest for WithTimeout<Request> {
     type Response = Request::Response;
     const TYPE: RequestType = Request::TYPE;
-    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+    fn encode(&self, buf: &mut impl Write) -> core::fmt::Result {
         self.request.encode(buf)
     }
     fn timeout(&self) -> Option<Duration> {
@@ -169,7 +119,7 @@ impl<R1: AtRequest, R2: AtRequest> AtRequest for (R1, R2) {
         },
     };
 
-    fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
+    fn encode(&self, buf: &mut impl Write) -> core::fmt::Result {
         self.0.encode(buf)?;
         match R2::TYPE.first_command() {
             CommandGroup::Extended => write!(buf, ";")?,
@@ -190,7 +140,7 @@ impl<R1: AtRequest, R2: AtRequest> AtRequest for (R1, R2) {
 
 pub fn encode_request<R: AtRequest>(
     request: &R,
-    buf: &mut impl core::fmt::Write,
+    buf: &mut impl Write,
 ) -> core::fmt::Result {
     match R::TYPE {
         RequestType::NonCommand
@@ -217,9 +167,10 @@ pub fn encode_request<R: AtRequest>(
     }
 }
 
-pub struct CommandRunner<'r, M: RawMutex> {
-    commands: ZerocopySender<'r, M, RawAtCommand>,
-    responses: ZerocopyReceiver<'r, M, ResponseCode>,
+pub struct CommandRunner<'r, P: PacketProvider> {
+    commands: SendDynPublisher<'r, CommandPacket<'r, P::Packet>>,
+    responses: SendDynSubscriber<'r, P::Packet>,
+    packet_provider: &'r mut P,
     default_timeout: Option<Duration>,
 }
 
@@ -310,26 +261,24 @@ impl<'r, M: RawMutex, U, T> AsRef<U> for MappedReceiveSlotRef<'r, M, U, T> {
     }
 }
 
-impl<'r, M> CommandRunner<'r, M>
-where
-    M: RawMutex,
-{
+impl<'r, P: PacketProvider<Packet: Clone>> CommandRunner<'r, P> {
     pub fn new(
-        commands: ZerocopySender<'r, M, RawAtCommand>,
-        responses: ZerocopyReceiver<'r, M, ResponseCode>,
+        commands: SendDynPublisher<'r, P::Packet>,
+        responses: SendDynSubscriber<'r, P::Packet>,
+        packet_provider: &'r mut P,
     ) -> Self {
         CommandRunner {
             commands,
             responses,
+            packet_provider,
             default_timeout: None,
         }
     }
 
     /// Send a request to the modem, but do not wait for a response.
     pub async fn send_request<R: AtRequest>(&mut self, request: &R) -> Result<Timeout, Error> {
-        let mut command = self.commands.send().await;
-        command.clear();
-        encode_request(request, &mut command.bytes).map_err(|_| Error::BufferOverflow)?;
+        let mut command = self.packet_provider.allocate().ok_or_else(|| Error::OutOfPackets)?;
+        encode_request(request, &mut command.borrow_mut()).map_err(|_| Error::BufferOverflow)?;
         command.send_done();
         if let Some(duration) = request.timeout().or(self.default_timeout) {
             Ok(Timeout::Unarmed(duration))
@@ -339,10 +288,10 @@ where
     }
 
     /// Wait for the modem to return a specific response.
-    pub async fn expect_response<T: AtResponse>(
+    pub async fn expect_response<P: ParseResult, T>(
         &mut self,
         timeout: Timeout,
-    ) -> Result<MappedReceiveSlotRef<'_, M, T, ResponseCode>, Error> {
+    ) -> Result<MappedReceiveSlotRef<'_, M, T, D>, Error> {
         let default_timeout = T::default_timeout().unwrap_or(AT_DEFAULT_TIMEOUT);
         let timeout_at = timeout.into_timeout(&default_timeout, Instant::now());
         loop {
@@ -375,8 +324,8 @@ where
         timeout: Timeout,
     ) -> Result<
         embassy_futures::select::Either<
-            MappedReceiveSlotRef<'_, M, T1, ResponseCode>,
-            MappedReceiveSlotRef<'_, M, T2, ResponseCode>,
+            MappedReceiveSlotRef<'_, M, T1>,
+            MappedReceiveSlotRef<'_, M, T2>,
         >,
         Error,
     > {
@@ -430,15 +379,15 @@ where
     }
 
     /// Send a request to the modem, and wait for the modem to respond.
-    pub async fn run<Request, Response>(&mut self, command: Request) -> Result<Response, Error>
+    pub async fn run<ResultParser, Request, Output>(&mut self, command: Request) -> Result<Output, Error>
     where
-        Request: AtRequest<Response = Response>,
-        Response: ExpectResponse<M>,
+        ResultParser: ParseResult<Output = Output> + ExpectResponse<ResultParser>,
+        Request: AtRequest<Response = ResultParser>,
     {
         log::debug!("Running AT command: {:?}", command);
         let timeout = self.send_request(&command).await?;
         log::trace!("Waiting for response for AT command: {:?}", command);
-        let result = Response::expect(self, timeout).await;
+        let result = ResultParser::expect(self, timeout).await;
         log::trace!("Completed AT command: {:?}", command);
 
         if let Err(e) = &result {
@@ -485,79 +434,52 @@ where
 /// Also to support variable length response sequences, there is a specialization
 /// tuples matching (heapless::Vec<T1, N>, T2) which will parse 0..N T1 responses
 /// until a T2 response is encountered.
-pub trait ExpectResponse<M: RawMutex>: Sized {
-    fn expect(
+pub trait ExpectResponse<P: ParseResult>: Sized {
+    type Output;
+    fn expect<M: RawMutex>(
         runner: &mut CommandRunner<'_, M>,
         timeout: Timeout,
-    ) -> impl Future<Output = Result<Self, Error>>;
+    ) -> impl Future<Output = Result<Self::Output, Error>>;
 }
 
-impl<T: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for T {
-    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+// No response
+impl<P: ParseResult> ExpectResponse<P> for () {
+    type Output = ();
+    async fn expect<M: RawMutex>(_: &mut CommandRunner<'_, M>, _: Timeout) -> Result<Self::Output, Error> {
+        Ok(())
+    }
+}
+
+impl<T: AtResponse + Clone, P: ParseResult> ExpectResponse<P> for T {
+    type Output = T;
+    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
         runner
-            .expect_response::<T>(timeout)
+            .expect_response::<P, T>(timeout)
             .await
             .map(|response| response.clone())
     }
 }
 
-impl<T: ExpectResponse<M>, Y: AtResponse + Clone, M: RawMutex> ExpectResponse<M> for (T, Y) {
-    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
-        let r1 = <T as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r2 = <Y as ExpectResponse<M>>::expect(runner, timeout).await?;
+impl<T: ExpectResponse<P>, Y: AtResponse + Clone, P: ParseResult> ExpectResponse<P> for (T, Y) {
+    type Output = (T::Output, Y);
+    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self::Output, Error> {
+        let r1 = <T as ExpectResponse<P>>::expect(runner, timeout).await?;
+        let r2 = <Y as ExpectResponse<P>>::expect(runner, timeout).await?;
         Ok((r1, r2))
     }
 }
 
-impl<T: AtResponse + Clone, Y: AtResponse + Clone, Z: AtResponse + Clone, M: RawMutex>
-    ExpectResponse<M> for (T, Y, Z)
+impl<T: AtResponse + Clone, P: ParseResult, const N: usize>
+    ExpectResponse<P> for Seq<T, N>
 {
-    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
-        let r1 = <T as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r2 = <Y as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r3 = <Z as ExpectResponse<M>>::expect(runner, timeout).await?;
-        Ok((r1, r2, r3))
-    }
-}
-
-impl<
-    T1: AtResponse + Clone,
-    T2: AtResponse + Clone,
-    T3: AtResponse + Clone,
-    T4: AtResponse + Clone,
-    T5: AtResponse + Clone,
-    T6: AtResponse + Clone,
-    M: RawMutex,
-> ExpectResponse<M> for (T1, T2, T3, T4, T5, T6)
-{
-    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
-        let r1 = <T1 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r2 = <T2 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r3 = <T3 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r4 = <T4 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r5 = <T5 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        let r6 = <T6 as ExpectResponse<M>>::expect(runner, timeout).await?;
-        Ok((r1, r2, r3, r4, r5, r6))
-    }
-}
-
-impl<M: RawMutex> ExpectResponse<M> for () {
-    async fn expect(_: &mut CommandRunner<'_, M>, _: Timeout) -> Result<Self, Error> {
-        Ok(())
-    }
-}
-
-impl<T: AtResponse + Clone, DoneT: AtResponse + Clone, M: RawMutex, const N: usize>
-    ExpectResponse<M> for Seq<T, N, DoneT>
-{
-    async fn expect(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
+    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, M>, timeout: Timeout) -> Result<Self, Error> {
         let mut response_vec = heapless::Vec::new();
-        let done_response = loop {
-            match runner.expect_either_response::<T, DoneT>(timeout).await {
-                Ok(embassy_futures::select::Either::First(item)) => response_vec
+        loop {
+            match runner.expect_response::<P, T>(timeout).await {
+                Ok(Some(item)) => response_vec
                     .push(item.clone())
                     .map_err(|_| Error::BufferOverflow)?,
-                Ok(embassy_futures::select::Either::Second(done)) => break done.clone(),
+                Ok(None) => break,
                 Err(err) => return Err(err),
             }
         };

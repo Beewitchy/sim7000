@@ -4,10 +4,11 @@
 // large enum variants are unavoidable in no_std, since we can't box things
 #![allow(clippy::large_enum_variant, clippy::result_large_err)]
 #![cfg_attr(feature = "nightly", feature(strip_circumfix))]
-#![cfg_attr(feature = "nightly", feature(option_reduce))]
+#![cfg_attr(feature = "nightly", feature(option_reduce, fmt_debug))]
 
 // TODO: at_command should probably be moved to its own crate
 pub mod at_command;
+mod default_packet_provider;
 mod drop;
 mod error;
 pub mod gnss;
@@ -32,16 +33,39 @@ use embedded_io_async::{Read, Write};
 #[cfg(feature = "log")]
 pub(crate) use log;
 
+pub use at_command::BaudRate;
+pub use default_packet_provider::StaticPacketProvider;
 pub use error::Error;
 pub use modem::power::PowerState;
 
-use core::future::Future;
+use core::{future::Future, ops::{Deref, DerefMut}};
 
 pub trait SerialError {
     type Error: core::fmt::Debug;
 }
 
-pub use at_command::BaudRate;
+/// Application-implemented packet data
+pub trait PacketRef {
+    type PacketData: AsMut<[u8]>;
+    fn capacity(&self) -> usize;
+}
+
+pub trait BorrowData: PacketRef {
+    type Borrowed<'b>: Deref<Target = Self::PacketData> where Self: 'b;
+    fn borrow_data(&self) -> Self::Borrowed<'_>;
+}
+
+pub trait BorrowDataMut: BorrowData {
+    type BorrowedMut<'b>: DerefMut<Target = Self::PacketData> where Self: 'b;
+    fn borrow_data_mut(&self) -> Self::BorrowedMut<'_>;
+}
+
+pub trait PacketStorage: BorrowDataMut {}
+
+pub trait PacketProvider {
+    type Packet: PacketStorage;
+    fn allocate(&self) -> Option<Self::Packet>;
+}
 
 #[derive(Default, Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -137,6 +161,8 @@ pub trait SplitIo: Sized {
     /// borrow `Self`, or to take ownership of it. This is to maintain compatibility with as many
     /// HALs as possible.
     fn split(this: &mut Option<Self>) -> (Self::Reader<'_>, Self::Writer<'_>);
+
+    fn reconfigure(&mut self, config: &BuildIoConfig) -> Result<(), BuildIoError>;
 }
 
 pub trait ModemPower {
