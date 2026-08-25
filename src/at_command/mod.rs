@@ -1,7 +1,5 @@
 use core::{
-    fmt::Debug,
-    marker::PhantomData,
-    num::{ParseFloatError, ParseIntError},
+    fmt::Debug, marker::PhantomData, num::{ParseFloatError, ParseIntError}, ops::ControlFlow,
 };
 use embassy_time::{Duration, Instant};
 
@@ -10,7 +8,7 @@ pub mod plmn;
 pub mod unsolicited;
 
 use cmgr::SmsMessage;
-pub use generic_response::{CloseOk, ShutOk, GenericOk, SimError, WritePrompt, SimResult};
+pub use generic_response::{CloseOk, GenericOk, ShutOk, SimError, SimResult, WritePrompt};
 
 pub mod at;
 pub mod ate;
@@ -287,13 +285,9 @@ impl<T: Clone, E: Clone> From<Either<T, E>> for Result<T, E> {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Seq<T: Clone, const N: usize>(
-    pub heapless::Vec<T, N>,
-);
+pub struct Seq<T: Clone, const N: usize>(pub heapless::Vec<T, N>);
 
-impl<T: Clone, const N: usize> IntoIterator
-    for Seq<T, N>
-{
+impl<T: Clone, const N: usize> IntoIterator for Seq<T, N> {
     type Item = <heapless::Vec<T, N> as IntoIterator>::Item;
     type IntoIter = <heapless::Vec<T, N> as IntoIterator>::IntoIter;
 
@@ -404,35 +398,44 @@ impl<'r, R> core::ops::DerefMut for TimestampedRef<'r, R> {
     }
 }
 
-pub struct MetaResponse<T, U>(U, PhantomData<T>);
+/// This can be used to support a secondary response type by borrowing the parser
+/// from another response type and implementing a [core::convert::TryFrom] conversion
+/// from the parsed type to the output type to retrieve the final data presented to
+/// the user.
+pub struct MetaResponse<Parsed, Output>(Output, PhantomData<Parsed>);
 
-impl<T, U> MetaResponse<T, U> {
-    pub const fn new(u: U) -> Self {
+impl<Parsed, Output> MetaResponse<Parsed, Output> {
+    pub const fn new(u: Output) -> Self {
         Self(u, PhantomData)
     }
 
-    pub fn inner(self) -> U {
+    pub fn inner(self) -> Output {
         self.0
     }
 }
 
-impl<T, U> AsRef<U> for MetaResponse<T, U> {
-    fn as_ref(&self) -> &U {
+impl<Parsed, Output> AsRef<Output> for MetaResponse<Parsed, Output> {
+    fn as_ref(&self) -> &Output {
         &self.0
     }
 }
 
-impl<T, U> AsMut<U> for MetaResponse<T, U> {
-    fn as_mut(&mut self) -> &mut U {
+impl<Parsed, Output> AsMut<Output> for MetaResponse<Parsed, Output> {
+    fn as_mut(&mut self) -> &mut Output {
         &mut self.0
     }
 }
 
+/// Defines simple matching logic for extracting a single token out of a str slice.
 pub trait MatchToken<R = Self> {
+    /// The token type to be extracted
     type Token;
+    /// Implements the matching behavior.
     fn match_token(line: &str) -> Option<(Self::Token, &str)>;
 }
 
+/// Defines the expected result & response types for a given command, along with any
+/// special parsing behavior.
 pub trait ParseResult {
     /// The type of the response(s) to be parsed
     type Response;
@@ -443,21 +446,28 @@ pub trait ParseResult {
     type Done: MatchToken;
     /// The error type & token
     ///
-    /// Unlike the [Self::Output]/[Self::Done] combo, there is
-    /// only one type for both the token parser and the final
-    /// error because all currently supported error types are
-    /// standalone rather than being combined with separate
+    /// Unlike the [Self::Output]/[Self::Done] combo, there is only one type for both
+    /// the token parser and the final error because all currently supported
+    /// error types are standalone rather than being combined with separate
     /// parsed data.
     type Error: MatchToken;
+    /// Implements special parsing behavior for when the [Self::Error] token is
+    /// encountered.
+    ///
+    /// The line given will be the remaining text of the line that the [Self::Error]
+    /// token was matched on, for example if the line is "MYERROR 3" and
+    /// "MYERROR" was matched, the line argument provided will contain " 3".
     fn parse_err(
         error_token: <Self::Error as MatchToken>::Token,
         line: &str,
     ) -> Result<Self::Error, AtParseErr>;
+    /// Implements the behavior to 'compose' the collected responses into a success
+    /// result.
     fn compose_result(
         response: Self::Response,
         done_token: <Self::Done as MatchToken>::Token,
         line: &str,
-    ) -> Result<Self::Output, Self::Response>;
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)>;
 }
 
 impl From<&'static str> for AtParseErr {

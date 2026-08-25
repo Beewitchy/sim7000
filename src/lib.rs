@@ -1,8 +1,6 @@
 #![no_std]
 #![allow(clippy::unnecessary_lazy_evaluations)]
 #![allow(clippy::single_component_path_imports)]
-// large enum variants are unavoidable in no_std, since we can't box things
-#![allow(clippy::large_enum_variant, clippy::result_large_err)]
 #![cfg_attr(feature = "nightly", feature(strip_circumfix))]
 #![cfg_attr(feature = "nightly", feature(option_reduce, fmt_debug))]
 
@@ -64,7 +62,7 @@ pub trait PacketStorage: BorrowDataMut {}
 
 pub trait PacketProvider {
     type Packet: PacketStorage;
-    fn allocate(&self) -> Option<Self::Packet>;
+    fn allocate(&self, min_size: usize) -> Option<Self::Packet>;
 }
 
 #[derive(Default, Clone, Copy, Debug)]

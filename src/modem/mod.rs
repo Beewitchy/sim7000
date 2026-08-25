@@ -3,9 +3,7 @@ mod context;
 pub mod power;
 
 use crate::{
-    BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower,
-    PowerState,
-    at_command::{
+    BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower, PacketProvider, PowerState, at_command::{
         AtRequest, CharacterSet, GenericOk, NetworkMode, SelectMessageService, Seq,
         SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, atz,
         cbatchk, ccid, cclk,
@@ -25,16 +23,9 @@ use crate::{
         creg, csclk, csq, gsn, httptofs, ifc,
         ipr::{self, BaudRate},
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
-    },
-    drop::{AsyncDrop, DropMessage},
-    gnss::Gnss,
-    log,
-    pump::{RawIoPump, RxPump, TxPump},
-    read::ModemReader,
-    tcp::{ConnectError, TcpStream},
-    voltage::VoltageWarner,
+    }, drop::{AsyncDrop, DropMessage}, gnss::Gnss, log, pump::{RawIoPump, RxPump, TxPump}, read::ModemReader, tcp::{ConnectError, TcpStream}, voltage::VoltageWarner,
 };
-pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse, RawAtCommand};
+pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse, CommandPacket};
 pub use context::*;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
@@ -50,10 +41,10 @@ pub trait ModemBehavior<M: RawMutex> {
     fn authenticate(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error>;
 }
 
-pub struct Modem<'m, P, M: RawMutex, const N: usize> {
+pub struct Modem<'m, P, S: PacketProvider, M: RawMutex, const N: usize> {
     context: &'m Shared<M, N>,
     active_signal: PowerSignalBroadcaster<'m>,
-    commands: Mutex<M, CommandRunner<'m, M>>,
+    commands: Mutex<M, CommandRunner<'m, S>>,
     power: P,
     supported_flow_control: EndpointFlowControlKind,
     max_baud_rate: BaudRate,
@@ -129,17 +120,17 @@ impl ReadyState {
     }
 }
 
-impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP_SLOTS> {
+impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, S, M, TCP_SLOTS> {
     pub fn new<'c, I: BuildIo>(
         io: I,
         power: P,
         context: &'m mut ModemContext<'c, M, TCP_SLOTS>,
     ) -> Result<
         (
-            Modem<'m, P, M, TCP_SLOTS>,
+            Modem<'m, P, S, M, TCP_SLOTS>,
             RawIoPump<'m, I, M>,
             TxPump<'m, M>,
-            RxPump<'m, M, TCP_SLOTS>,
+            RxPump<'m, S, M, TCP_SLOTS>,
         ),
         Error,
     > {
@@ -1398,9 +1389,9 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, M, TCP
     }
 }
 
-pub struct SmsStream<'a, 'c, M: RawMutex> {
+pub struct SmsStream<'a, 'c, S: PacketProvider, M: RawMutex> {
     sms_indicies: Receiver<'a, M, NewSmsIndex, 5>,
-    commands: &'a Mutex<M, CommandRunner<'c, M>>,
+    commands: &'a Mutex<M, CommandRunner<'c, S>>,
     // state: &'a Signal<CriticalSectionRawMutex, SmsState>,
 }
 

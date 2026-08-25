@@ -1,9 +1,9 @@
 use core::cell::{Ref, RefCell, RefMut};
-
 use embassy_sync::blocking_mutex::raw::{RawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::{PacketProvider, PacketRef, PacketStorage, BorrowDataMut, BorrowData};
+
 
 struct PacketBuf<const MTU: usize> {
     buf: [u8; MTU],
@@ -114,7 +114,7 @@ pub trait BufferPool {
 
 impl<M: RawMutex + 'static, const MTU: usize, const N: usize> PacketProvider for StaticPacketProvider<M, MTU, N> {
     type Packet = StaticPacket<Self, MTU>;
-    fn allocate(&self) -> Option<Self::Packet> {
+    fn allocate(&self, min_size: usize) -> Option<Self::Packet> {
         self.alloc().map(|p| StaticPacket {
             p_ref: p,
             pool: &self,
@@ -144,7 +144,7 @@ pub struct StaticPacket<Pool: BufferPool + 'static, const MTU: usize> {
 
 
 impl<Pool: BufferPool + 'static, const MTU: usize> PacketRef for StaticPacket<Pool, MTU> {
-    type PacketData = RefMut<StaticPacket<Pool, MTU>>;
+    type PacketData = StaticPacket<Pool, MTU>;
 
     fn capacity(&self) -> usize {
         MTU
@@ -176,14 +176,22 @@ impl<T> PacketRef for &T where T:PacketRef {
 }
 
 impl<T> BorrowData for &T where T: BorrowData {
-    type Borrowed<'b> = T::Borrowed<'b>;
+    type Borrowed<'b> = T::Borrowed<'b> where Self: 'b;
 
     fn borrow_data(&self) -> Self::Borrowed<'_> {
         T::borrow_data(self)
     }
 }
 
-impl<Pool: BufferPool + 'static, const MTU: usize> PacketStorage for &StaticPacket<Pool, MTU> {
+impl<T> BorrowDataMut for &T where T: BorrowDataMut {
+    type BorrowedMut<'b> = T::BorrowedMut<'b> where Self: 'b;
+
+    fn borrow_data_mut(&self) -> Self::BorrowedMut<'_> {
+        T::borrow_data_mut(self)
+    }
+}
+
+impl<Pool: BufferPool + 'static, const MTU: usize> PacketStorage for StaticPacket<Pool, MTU> {
 }
 
 impl<Pool: BufferPool + 'static, const MTU: usize> AsRef<[u8]> for StaticPacket<Pool, MTU> {
