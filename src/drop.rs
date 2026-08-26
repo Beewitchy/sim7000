@@ -68,7 +68,7 @@ pub enum DropMessage {
 
 impl DropMessage {
     /// Run the Drop logic for this message.
-    pub async fn run<P: PacketProvider, M: RawMutex>(&self, runner: &mut CommandRunner<'_, P>) -> Result<(), Error> {
+    pub async fn run(&self, runner: &mut CommandRunner<'_>) -> Result<(), Error> {
         log::debug!("Sending drop command for {:?}", self);
 
         /// It is Ok for the result to be a SimError

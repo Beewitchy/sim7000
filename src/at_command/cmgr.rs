@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CMGR=...
 #[derive(Debug)]
@@ -10,7 +10,7 @@ pub struct ReadSms {
 }
 
 impl AtRequest for ReadSms {
-    type Response = (SmsMessage, GenericOk);
+    type Response = SimResult<GenericOk<(SmsHeader, SmsMessage)>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMGR={}", self.index)
@@ -19,12 +19,11 @@ impl AtRequest for ReadSms {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct SmsMessage {
+pub struct SmsHeader {
     pub sender: String<20>,
-    pub message: String<160>,
 }
 
-impl AtParseLine for SmsMessage {
+impl AtParseLine for SmsHeader {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         let rest = line
             .strip_prefix("+CMGR:")
@@ -36,7 +35,20 @@ impl AtParseLine for SmsMessage {
 
         Ok(Self {
             sender: sender.trim_matches('\"').try_into().unwrap_or_default(),
-            message: "".try_into().unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SmsMessage {
+    pub message: String<160>,
+}
+
+impl AtParseLine for SmsMessage {
+    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        Ok(Self {
+            message: line.try_into().map_err(|_| "Message too long")?,
         })
     }
 }

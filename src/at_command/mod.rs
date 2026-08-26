@@ -260,12 +260,12 @@ pub trait AtRequest: Debug {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Either<T1: Clone, T2: Clone> {
+pub enum Either<T1, T2> {
     T1(T1),
     T2(T2),
 }
 
-impl<T1: Clone, T2: Clone> From<Result<T1, T2>> for Either<T1, T2> {
+impl<T1, T2> From<Result<T1, T2>> for Either<T1, T2> {
     fn from(value: Result<T1, T2>) -> Self {
         match value {
             Ok(val) => Self::T1(val),
@@ -274,7 +274,7 @@ impl<T1: Clone, T2: Clone> From<Result<T1, T2>> for Either<T1, T2> {
     }
 }
 
-impl<T: Clone, E: Clone> From<Either<T, E>> for Result<T, E> {
+impl<T, E> From<Either<T, E>> for Result<T, E> {
     fn from(value: Either<T, E>) -> Self {
         match value {
             Either::T1(val) => Ok(val),

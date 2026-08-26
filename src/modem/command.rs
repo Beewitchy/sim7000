@@ -1,74 +1,31 @@
-use core::{cmp::min, fmt::Write, future::Future, marker::PhantomData, mem::ManuallyDrop, ops::ControlFlow};
-use embassy_sync::{
-    blocking_mutex::raw::RawMutex, channel::{Receiver, SendDynamicReceiver, SendDynamicSender}, pipe::{DynamicReader, DynamicWriter, Reader, Writer}, pubsub::{SendDynPublisher, SendDynSubscriber}, zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
+use core::{
+    cmp::min, fmt::Write, future::Future, marker::PhantomData, mem::ManuallyDrop, ops::ControlFlow,
 };
-use embassy_time::{Duration, Instant, with_deadline};
+use embassy_sync::{
+    blocking_mutex::raw::RawMutex,
+    channel::{DynamicReceiver, Receiver, SendDynamicSender},
+    pipe::{DynamicReader, DynamicWriter, Reader, Writer},
+    pubsub::{SendDynPublisher, SendDynSubscriber},
+    zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
+};
+use embassy_time::{Duration, Instant, TimeoutError, with_deadline};
 use heapless::{String, Vec, string::StringView};
 
 use crate::{
-    Error, PacketProvider, PacketStorage, at_command::{
-        AtParseErr, AtParseLine, AtRequest, CommandGroup, Either, GenericOk, MatchToken, MetaResponse, ParseResult, RequestType, Seq,
-    }, log, read::{ModemReader, ReadTimestamp},
+    Error, PacketProvider, PacketStorage,
+    at_command::{
+        AtParseErr, AtParseLine, AtRequest, CommandGroup, Either, GenericOk, MatchToken,
+        MetaResponse, ParseResult, RequestType, Seq,
+    },
+    log,
+    modem::unsolicited,
+    read::{ModemReader, ReadTimestamp},
 };
 
 /// The default timeout of AT commands
 pub const AT_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub const MAX_COMMAND_LEN: usize = 599;
-
-#[derive(Clone)]
-pub struct CommandPacket<S: PacketStorage> {
-    storage: S,
-    len: usize,
-}
-
-impl<S: PacketStorage> Write for CommandPacket<S> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let mut data = self.storage.borrow_data_mut();
-        let data: &mut [u8] = data.as_mut();
-        if let Some(len) = self.len.checked_add(s.len()) && len < data.len() {
-            let start = self.len;
-            self.len = len;
-            data[start..len].copy_from_slice(s.as_bytes());
-            Ok(())
-        } else {
-            Err(core::fmt::Error)
-        }
-    }
-}
-
-impl<S: PacketStorage> CommandPacket<S> {
-    pub const fn new(storage: S) -> Self {
-        Self {
-            storage,
-            len: 0,
-        }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.storage.borrow_data().as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.bytes.capacity()
-    }
-}
-
-#[derive(Clone)]
-pub struct ResponsePacket<S: PacketStorage> {
-    packet: CommandPacket<S>,
-    read_instant: Instant,
-}
-
-impl<S: PacketStorage> ResponsePacket<S> {
-    pub const fn new(packet: CommandPacket<S>, read_instant: Instant) -> Self {
-        Self { packet, read_instant }
-    }
-}
 
 #[derive(Clone, Copy, Default, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -150,10 +107,7 @@ impl<R1: AtRequest, R2: AtRequest> AtRequest for (R1, R2) {
     }
 }
 
-pub fn encode_request<R: AtRequest>(
-    request: &R,
-    buf: &mut impl Write,
-) -> core::fmt::Result {
+pub fn encode_request<R: AtRequest>(request: &R, buf: &mut impl Write) -> core::fmt::Result {
     match R::TYPE {
         RequestType::NonCommand
         | RequestType::Command(CommandGroup::NonCommand)
@@ -177,13 +131,6 @@ pub fn encode_request<R: AtRequest>(
             write!(buf, "\r")
         }
     }
-}
-
-pub struct CommandRunner<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> {
-    rx: Reader<'r, M, BUF>,
-    tx: Writer<'r, M, BUF>,
-    rx_timestamps: Receiver<'r, M, ReadTimestamp, IO_CHUNKS>,
-    default_timeout: Option<Duration>,
 }
 
 pub struct ReceiveSlotRef<'r, M: RawMutex, T> {
@@ -273,17 +220,33 @@ impl<'r, M: RawMutex, U, T> AsRef<U> for MappedReceiveSlotRef<'r, M, U, T> {
     }
 }
 
-impl<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> CommandRunner<'r, M, BUF, IO_CHUNKS> {
+pub struct CommandRunner<'r, Up: unsolicited::Parser> {
+    modem_reader: ModemReader<'r>,
+    tx: DynamicWriter<'r>,
+    unsolicited_parser: Up,
+    default_timeout: Option<Duration>,
+}
+
+impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
     pub fn new(
-        rx: Reader<'r, M, BUF>,
-        rx_timestamps: Receiver<'r, M, ReadTimestamp, IO_CHUNKS>,
-        tx: Writer<'r, M, BUF>,
+        rx: DynamicReader<'r>,
+        rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,
+        tx: DynamicWriter<'r>,
+        unsolicited_parser: Up,
     ) -> Self {
         CommandRunner {
-            rx,
+            modem_reader: ModemReader::new(rx, rx_timestamps),
             tx,
-            rx_timestamps,
+            unsolicited_parser,
             default_timeout: None,
+        }
+    }
+
+    pub async fn write_all(&mut self, buf: &[u8]) {
+        let mut buf = buf;
+        while !buf.is_empty() {
+            let n = self.tx.write(buf).await;
+            buf = &buf[n..];
         }
     }
 
@@ -291,7 +254,7 @@ impl<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> CommandRunner<'r
     pub async fn send_request<R: AtRequest>(&mut self, request: &R) -> Result<Timeout, Error> {
         let mut command_buf = heapless::Vec::<u8, MAX_COMMAND_LEN>::new();
         encode_request(request, &mut command_buf).map_err(|_| Error::BufferOverflow)?;
-        self.tx.write_all(&*command_buf).await;
+        self.write_all(&*command_buf).await;
         if let Some(duration) = request.timeout().or(self.default_timeout) {
             Ok(Timeout::Unarmed(duration))
         } else {
@@ -310,76 +273,102 @@ impl<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> CommandRunner<'r
     {
         let start_instant = Instant::now();
         let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
-        let mut modem_reader = ModemReader::new(self.rx, self.rx_timestamps);
         loop {
-            let (line, read_instant) = with_deadline(timeout_at, modem_reader.read_line()).await??;
+            let (line, read_instant) =
+                match with_deadline(timeout_at, self.modem_reader.read_line()).await {
+                    Ok(Ok(read)) => read,
+                    Ok(Err(err)) => return ControlFlow::Break(Err(err)),
+                    Err(TimeoutError) => return ControlFlow::Break(Err(Error::Timeout)),
+                };
             let read_instant = read_instant.unwrap_or(&start_instant);
             if let Some(matched) = DoneT::match_token(line) {
                 return ControlFlow::Break(Ok(Ok(matched)));
             }
+            if let Some(matched) = ErrorT::match_token(line) {
+                return ControlFlow::Break(Ok(Err(matched)));
+            }
             match ResponseT::from_line(line, read_instant) {
                 Ok(response) => return ControlFlow::Continue(response),
-                Err(AtParseErr::Mismatch) => {},
+                Err(AtParseErr::Mismatch) => {}
                 Err(_err) => {
                     log::info!("Failed to parse response, {:?}", _err);
                     return ControlFlow::Break(Err(Error::UnknownResponse));
                 }
             }
-
-            #[cfg(any(feature = "log", feature = "defmt"))]
-            log::warn!(
-                "Got unexpected response {:?}",
-                line,
-            );
+            match self.unsolicited_parser.parse(line, read_instant).await {
+                Ok(Some(urc)) => match self
+                    .unsolicited_parser
+                    .parse_all(&mut self.modem_reader, urc)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => return ControlFlow::Break(Err(err)),
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    #[cfg(any(feature = "log", feature = "defmt"))]
+                    log::warn!("Got unexpected response {:?}, {:?}", line, err,);
+                }
+            }
         }
     }
 
     /// Wait for the modem to return either of two response types.
-    pub async fn expect_either_response<ResultT: ParseResult, T1: AtParseLine, T2: AtParseLine>(
+    pub async fn expect_either_response<DoneT, ErrorT, DoneToken, ErrorToken, T1: AtParseLine, T2: AtParseLine>(
         &mut self,
         timeout: Timeout,
-    ) -> Result<
-        embassy_futures::select::Either<
-            T1,
-            T2,
-        >,
-        Error,
-    > {
-        use embassy_futures::select::Either;
-        let default_timeout = cfg_select! {
-            feature = "nightly" => T1::default_timeout()
-                .reduce(T2::default_timeout(), |l, r| {
-                    l.checked_add(r).unwrap_or(Duration::MAX)
-                }),
-            _ => T1::default_timeout().max(T2::default_timeout()),
-        }
-        .unwrap_or(AT_DEFAULT_TIMEOUT);
-        let timeout_at = timeout.into_timeout(&default_timeout, Instant::now());
+    ) -> ControlFlow<Result<Result<(DoneToken, &str), (ErrorToken, &str)>, Error>, Either<T1, T2>>
+    where
+        DoneT: MatchToken<Token = DoneToken>,
+        ErrorT: MatchToken<Token = ErrorToken>,
+    {
+        let start_instant = Instant::now();
+        let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
         loop {
-            let response = with_deadline(timeout_at, self.responses.receive()).await?;
-            let response = ReceiveSlotRef::new(response);
-            match ReceiveSlotRef::filter_map(response, |response| T1::from_generic(response)) {
-                Ok(response) => return Ok(Either::First(response)),
-                Err(response) => match ReceiveSlotRef::filter_map(response, |response| {
-                    T2::from_generic(response)
-                }) {
-                    Ok(response) => return Ok(Either::Second(response)),
-                    Err(err) => match &*err {
-                        ResponseCode::Error(error) => return Err(Error::Sim(*error)),
-                        unexpected_response => {
-                            // TODO: we might want to make this a hard error, if/when we feel confident in
-                            // how both the driver and the modem behaves
-                            #[cfg(any(feature = "log", feature = "defmt"))]
-                            log::warn!(
-                                "Got unexpected response {:?} while waiting for {:?} or {:?}",
-                                unexpected_response,
-                                T1::RESPONSE_KIND,
-                                T2::RESPONSE_KIND
-                            );
-                        }
-                    },
+            let (line, read_instant) =
+                match with_deadline(timeout_at, self.modem_reader.read_line()).await {
+                    Ok(Ok(read)) => read,
+                    Ok(Err(err)) => return ControlFlow::Break(Err(err)),
+                    Err(TimeoutError) => return ControlFlow::Break(Err(Error::Timeout)),
+                };
+            let read_instant = read_instant.unwrap_or(&start_instant);
+            if let Some(matched) = DoneT::match_token(line) {
+                return ControlFlow::Break(Ok(Ok(matched)));
+            }
+            if let Some(matched) = ErrorT::match_token(line) {
+                return ControlFlow::Break(Ok(Err(matched)));
+            }
+            match T1::from_line(line, read_instant) {
+                Ok(response) => return ControlFlow::Continue(Either::T1(response)),
+                Err(AtParseErr::Mismatch) => {}
+                Err(_err) => {
+                    log::info!("Failed to parse response, {:?}", _err);
+                    return ControlFlow::Break(Err(Error::UnknownResponse));
+                }
+            }
+            match T2::from_line(line, read_instant) {
+                Ok(response) => return ControlFlow::Continue(Either::T2(response)),
+                Err(AtParseErr::Mismatch) => {}
+                Err(_err) => {
+                    log::info!("Failed to parse response, {:?}", _err);
+                    return ControlFlow::Break(Err(Error::UnknownResponse));
+                }
+            }
+            match self.unsolicited_parser.parse(line, read_instant).await {
+                Ok(Some(urc)) => match self
+                    .unsolicited_parser
+                    .parse_all(&mut self.modem_reader, urc)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => return ControlFlow::Break(Err(err)),
                 },
-            };
+                Ok(None) => {}
+                Err(err) => {
+                    #[cfg(any(feature = "log", feature = "defmt"))]
+                    log::warn!("Got unexpected response {:?}, {:?}", line, err,);
+                }
+            }
         }
     }
 
@@ -387,15 +376,16 @@ impl<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> CommandRunner<'r
     pub async fn send_bytes(&mut self, bytes: &[u8]) {
         let mut bytes = bytes;
         while !bytes.is_empty() {
-            let mut chunk = self.commands.send().await;
-            let n = min(chunk.capacity(), bytes.len());
-            let _ = chunk.extend(&bytes[..n]);
+            let n = self.tx.write(bytes).await;
             bytes = &bytes[n..];
         }
     }
 
     /// Send a request to the modem, and wait for the modem to respond.
-    pub async fn run<ResultParser, Request, Output>(&mut self, command: Request) -> Result<Output, Error>
+    pub async fn run<ResultParser, Request, Output>(
+        &mut self,
+        command: Request,
+    ) -> Result<Output, Error>
     where
         ResultParser: ParseResult<Output = Output> + ExpectResponse<ResultParser>,
         Request: AtRequest<Response = ResultParser>,
@@ -442,7 +432,6 @@ impl<'r, M: RawMutex, const BUF: usize, const IO_CHUNKS: usize> CommandRunner<'r
     }
 }
 
-
 /// Defines a line-by-line parser for a given result type.
 ///
 /// This is intended to effectively present a dyn compatible interface to a
@@ -461,8 +450,8 @@ pub trait ResultParser {
 /// until a T2 response is encountered.
 pub trait ExpectResponse<P: ParseResult>: Sized {
     type Output;
-    fn expect<M: RawMutex>(
-        runner: &mut CommandRunner<'_, P>,
+    fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
         timeout: Timeout,
     ) -> impl Future<Output = Result<Self::Output, Error>>;
 }
@@ -470,14 +459,20 @@ pub trait ExpectResponse<P: ParseResult>: Sized {
 // No response
 impl<P: ParseResult> ExpectResponse<P> for () {
     type Output = ();
-    async fn expect<M: RawMutex>(_: &mut CommandRunner<'_, P>, _: Timeout) -> Result<Self::Output, Error> {
+    async fn expect<Up: unsolicited::Parser>(
+        _: &mut CommandRunner<'_, Up>,
+        _: Timeout,
+    ) -> Result<Self::Output, Error> {
         Ok(())
     }
 }
 
 impl<T: AtParseLine, P: ParseResult> ExpectResponse<P> for T {
     type Output = T;
-    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self, Error> {
+    async fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
+        timeout: Timeout,
+    ) -> Result<Self, Error> {
         runner
             .expect_response::<P, T>(timeout)
             .await
@@ -487,17 +482,21 @@ impl<T: AtParseLine, P: ParseResult> ExpectResponse<P> for T {
 
 impl<T: ExpectResponse<P>, Y: AtParseLine, P: ParseResult> ExpectResponse<P> for (T, Y) {
     type Output = (T::Output, Y);
-    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self::Output, Error> {
+    async fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
+        timeout: Timeout,
+    ) -> Result<Self::Output, Error> {
         let r1 = <T as ExpectResponse<P>>::expect(runner, timeout).await?;
         let r2 = <Y as ExpectResponse<P>>::expect(runner, timeout).await?;
         Ok((r1, r2))
     }
 }
 
-impl<T: AtParseLine, P: ParseResult, const N: usize>
-    ExpectResponse<P> for Seq<T, N>
-{
-    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self, Error> {
+impl<T: AtParseLine, P: ParseResult, const N: usize> ExpectResponse<P> for Seq<T, N> {
+    async fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
+        timeout: Timeout,
+    ) -> Result<Self, Error> {
         let mut response_vec = heapless::Vec::new();
         loop {
             match runner.expect_response::<P, T>(timeout).await {
@@ -507,37 +506,50 @@ impl<T: AtParseLine, P: ParseResult, const N: usize>
                 Ok(None) => break,
                 Err(err) => return Err(err),
             }
-        };
+        }
         Ok(Seq(response_vec, done_response))
     }
 }
 
-// impl<T: AtParseLine, E: AtParseLine, M: RawMutex> ExpectResponse<M> for Result<T, E> {
-//     async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self, Error> {
-//         match runner.expect_either_response::<T, E>(timeout).await {
-//             Ok(embassy_futures::select::Either::First(item)) => Ok(Ok(item.clone())),
-//             Ok(embassy_futures::select::Either::Second(item)) => Ok(Err(item.clone())),
+// impl<T: AtParseLine, E: AtParseLine, M: RawMutex> ExpectResponse<M> for Result<T,
+// E> {     async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout:
+// Timeout) -> Result<Self, Error> {         match runner.expect_either_response::<T,
+// E>(timeout).await {             Ok(embassy_futures::select::Either::First(item))
+// => Ok(Ok(item.clone())),
+// Ok(embassy_futures::select::Either::Second(item)) => Ok(Err(item.clone())),
 //             Err(err) => Err(err),
 //         }
 //     }
 // }
 
-impl<T1: AtParseLine, T2: AtParseLine, P: ParseResult> ExpectResponse<P>
-    for Either<T1, T2>
-{
+impl<T1: AtParseLine, T2: AtParseLine, P: ParseResult> ExpectResponse<P> for Either<T1, T2> {
     type Output = Self;
-    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self::Output, Error> {
-        match runner.expect_either_response::<T1, T2>(timeout).await {
-            Ok(embassy_futures::select::Either::First(item)) => Ok(Either::T1(item.clone())),
-            Ok(embassy_futures::select::Either::Second(item)) => Ok(Either::T2(item.clone())),
-            Err(err) => Err(err),
+    async fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
+        timeout: Timeout,
+    ) -> Result<Self::Output, Error> {
+        match runner.expect_either_response::<P::Done, P::Error, _, _, T1, T2>(timeout).await {
+            ControlFlow::Continue(Either::T1(item)) => Ok(Either::T1(item)),
+            ControlFlow::Continue(Either::T2(item)) => Ok(Either::T2(item)),
+            ControlFlow::Break(Ok(Ok((token, line)))) => {
+                Ok(Ok(P::compose_result()))
+            }
+            ControlFlow::Break(Ok(Err((token, line)))) => {
+                Ok(Err(P::parse_err(token, line)))
+            }
+            ControlFlow::Break(Err(err)) => Err(err),
         }
     }
 }
 
-impl<Parsed: AtParseLine, Output: TryFrom<Parsed>, P: ParseResult> ExpectResponse<P> for MetaResponse<Parsed, Output> {
+impl<Parsed: AtParseLine, Output: TryFrom<Parsed>, P: ParseResult> ExpectResponse<P>
+    for MetaResponse<Parsed, Output>
+{
     type Output = Output;
-    async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout: Timeout) -> Result<Self::Output, Error> {
+    async fn expect<Up: unsolicited::Parser>(
+        runner: &mut CommandRunner<'_, Up>,
+        timeout: Timeout,
+    ) -> Result<Self::Output, Error> {
         let o = <Parsed as ExpectResponse<P>>::expect(runner, timeout)
             .await?
             .try_into()

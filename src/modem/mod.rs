@@ -1,6 +1,7 @@
 mod command;
 mod context;
 pub mod power;
+pub mod unsolicited;
 
 use crate::{
     BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower, PacketProvider, PowerState, at_command::{
@@ -23,7 +24,7 @@ use crate::{
         creg, csclk, csq, gsn, httptofs, ifc,
         ipr::{self, BaudRate},
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
-    }, drop::{AsyncDrop, DropMessage}, gnss::Gnss, log, pump::{RawIoPump, RxPump, TxPump}, read::ModemReader, tcp::{ConnectError, TcpStream}, voltage::VoltageWarner,
+    }, drop::{AsyncDrop, DropMessage}, gnss::Gnss, log, pump::{RawIoPump}, read::ModemReader, tcp::{ConnectError, TcpStream}, voltage::VoltageWarner,
 };
 pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse, CommandPacket};
 pub use context::*;
@@ -34,17 +35,18 @@ use embassy_time::{Duration, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
 use power::PowerSignalBroadcaster;
+use unsolicited::UnsolicitedMessageRunner;
 
 // todo: ellie (17.05.2026) - Implement different modem behaviors
-pub trait ModemBehavior<M: RawMutex> {
-    fn post_init(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error>;
-    fn authenticate(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error>;
+pub trait ModemBehavior {
+    fn post_init(&self, commands: &mut CommandRunner<'_>) -> Result<(), Error>;
+    fn authenticate(&self, commands: &mut CommandRunner<'_>) -> Result<(), Error>;
 }
 
-pub struct Modem<'m, P, S: PacketProvider, M: RawMutex, const N: usize> {
-    context: &'m Shared<M, N>,
+pub struct Modem<'m, P, M: RawMutex, const TCP_SLOTS: usize> {
+    context: &'m Shared<M, TCP_SLOTS>,
     active_signal: PowerSignalBroadcaster<'m>,
-    commands: Mutex<M, CommandRunner<'m, S>>,
+    commands: Mutex<M, CommandRunner<'m>>,
     power: P,
     supported_flow_control: EndpointFlowControlKind,
     max_baud_rate: BaudRate,

@@ -1,6 +1,6 @@
 use embassy_time::Duration;
 
-use super::{AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtRequest, GenericOk, RequestType, CommandGroup, SimResult, unsolicited};
 
 /// AT+CPOWD=0
 ///
@@ -28,7 +28,7 @@ impl AtRequest for UrgentPowerDown {
 
 impl AtRequest for NormalPowerDown {
     // Check the status with [crate::modem::Modem::ready()]
-    type Response = GenericOk;
+    type Response = SimResult<unsolicited::PowerDown>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CPOWD=1")

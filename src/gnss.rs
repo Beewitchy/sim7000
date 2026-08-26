@@ -15,12 +15,12 @@ pub const GNSS_SLOTS: usize = 1;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Closed;
 
-pub struct Gnss<'x, 'c, M: RawMutex, P: PacketProvider> {
+pub struct Gnss<'x, 'c, M: RawMutex> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
     unsolicited_reports: Option<&'x Signal<M, unsolicited::GnssReport>>,
-    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, P>>,
+    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c>>,
     power_signal: PowerSignalListener<'x, M>,
     _drop: AsyncDrop<'x, M>,
 
@@ -34,7 +34,7 @@ where
 {
     pub(crate) fn new(
         unsolicited_reports: &'x Signal<M, unsolicited::GnssReport>,
-        commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, M>>,
+        commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c>>,
         power_signal: PowerSignalListener<'x, M>,
         drop_channel: &'x DropChannel<M>,
         timeout: Duration,

@@ -1,8 +1,8 @@
 use core::str::from_utf8;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    channel::Receiver,
-    pipe::{Pipe, Reader},
+    channel::{DynamicReceiver},
+    pipe::{Pipe, DynamicReader},
     pubsub::Subscriber,
 };
 use embassy_time::Instant;
@@ -16,28 +16,25 @@ pub(crate) struct ReadTimestamp {
     pub timestamp: Instant,
 }
 
-pub struct ModemReader<'context, M: RawMutex, const IO_BUF: usize, const IO_CHUNKS: usize> {
-    read: Reader<'context, M, IO_BUF>,
-    read_timestamps: Receiver<'context, M, ReadTimestamp, IO_CHUNKS>,
+pub struct ModemReader<'r> {
+    rx: DynamicReader<'r>,
+    rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,
     total_consumed: usize,
-    // Length of the line currently returned by read_line
+    // Length of the line currently returned by rx_line
     line_len: Option<usize>,
     line_timestamp: Option<Instant>,
     next_timestamp: Option<ReadTimestamp>,
 }
 
-impl<'context, M, const IO_BUF: usize, const IO_CHUNKS: usize>
-    ModemReader<'context, M, IO_BUF, IO_CHUNKS>
-where
-    M: RawMutex,
-{
+impl<'r>
+    ModemReader<'r> {
     pub fn new(
-        read: Reader<'context, M, IO_BUF>,
-        read_timestamps: Receiver<'context, M, ReadTimestamp, IO_CHUNKS>,
-    ) -> ModemReader<'context, M, IO_BUF, IO_CHUNKS> {
+        rx: DynamicReader<'r>,
+        rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,
+    ) -> ModemReader<'r> {
         ModemReader {
-            read,
-            read_timestamps,
+            rx,
+            rx_timestamps,
             total_consumed: 0,
             line_len: None,
             line_timestamp: None,
@@ -60,7 +57,7 @@ where
                 }
                 None => {}
             }
-            match self.read_timestamps.try_receive() {
+            match self.rx_timestamps.try_receive() {
                 Ok(ReadTimestamp {
                     total_read,
                     timestamp,
@@ -78,7 +75,7 @@ where
     }
 
     fn consume_line(&mut self, line_len: usize) {
-        self.read.consume(line_len);
+        self.rx.consume(line_len);
         self.total_consumed += line_len;
     }
 
@@ -90,7 +87,7 @@ where
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
-            let buffer = self.read.fill_buf().await;
+            let buffer = self.rx.fill_buf().await;
             self.update_read_timestamp();
             let line_timestamp = self.line_timestamp.as_ref();
             #[cfg(feature = "__trace_io")]
@@ -143,7 +140,7 @@ where
             self.consume_line(line_len);
         }
         while !buf.is_empty() {
-            match self.read.read(buf).await {
+            match self.rx.read(buf).await {
                 0 => return Err(Error::Serial),
                 n => {
                     self.total_consumed += n;

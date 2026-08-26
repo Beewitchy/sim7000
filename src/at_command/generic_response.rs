@@ -89,7 +89,7 @@ impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
         response: Self::Response,
         (): <Self::Done as MatchToken>::Token,
         _: &str,
-    ) -> Result<Self::Output, Self::Response> {
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
         Ok(response)
     }
 }
