@@ -1,14 +1,14 @@
 use core::str::from_utf8;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    channel::{DynamicReceiver},
-    pipe::{Pipe, DynamicReader},
+    channel::DynamicReceiver,
+    pipe::{DynamicReader, Pipe},
     pubsub::Subscriber,
 };
 use embassy_time::Instant;
 use heapless::Vec;
 
-use crate::{Error, PacketStorage, log};
+use crate::{Error, log};
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReadTimestamp {
@@ -26,8 +26,7 @@ pub struct ModemReader<'r> {
     next_timestamp: Option<ReadTimestamp>,
 }
 
-impl<'r>
-    ModemReader<'r> {
+impl<'r> ModemReader<'r> {
     pub fn new(
         rx: DynamicReader<'r>,
         rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,

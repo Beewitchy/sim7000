@@ -1,6 +1,6 @@
 use crate::{error::Xtra, Error};
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CGNSCPY=...
 #[derive(Debug)]
@@ -8,7 +8,7 @@ use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, Gener
 pub struct CopyXtraFile;
 
 impl AtRequest for CopyXtraFile {
-    type Response = (CopyResponse, GenericOk);
+    type ResultType = SimResult<GenericOk<CopyResponse>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSCPY")

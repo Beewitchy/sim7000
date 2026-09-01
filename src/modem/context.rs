@@ -1,32 +1,23 @@
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex, channel::Channel, pipe::Pipe, pubsub::PubSubChannel, signal::Signal, watch::Watch, zerocopy_channel::Channel as ZerocopyChannel,
+    blocking_mutex::raw::RawMutex, channel::Channel, pipe::Pipe, signal::Signal, watch::Watch,
 };
 
-use super::{RawAtCommand, ReadyState, SmsState, power::PowerSignal};
+use super::{ReadyState, SmsState, power::PowerSignal};
 use crate::{
-    BuildIoConfig, PacketStorage, PacketProvider, PacketRef, StateSignal, at_command::unsolicited::{
-            ConnectionMessage, GnssReport, NetworkRegistration, NewSmsIndex, Psuttz, RegistrationStatus, VoltageWarning
-        }, drop::DropChannel, slot::Slot, tcp::TCP_RX_BUF_LEN, util::{Lagged, RingChannel},
+    BuildIoConfig, StateSignal,
+    at_command::unsolicited::{
+        ConnectionMessage, GnssReport, NetworkRegistration, NewSmsIndex, Psuttz,
+        RegistrationStatus, VoltageWarning,
+    },
+    drop::DropChannel,
+    read::ReadTimestamp,
+    slot::Slot,
+    tcp::TCP_RX_BUF_LEN,
+    util::{Lagged, RingChannel},
 };
 
 pub type TcpRxPipe<M> = Pipe<M, TCP_RX_BUF_LEN>;
 pub type TcpEventChannel<M> = RingChannel<M, ConnectionMessage, 8>;
-
-pub(crate) struct PacketChannels<'c, M: RawMutex, P: PacketProvider, const RX_QUEUE_LEN: usize, const CONCURRENT_CH_NUM: usize = 1> where P::Packet: Clone {
-    pub(crate) commands: Channel<M, P::Packet, 1>,
-    pub(crate) responses: PubSubChannel<M,P::Packet, RX_QUEUE_LEN, CONCURRENT_CH_NUM, 1>,
-    pub(crate) packet_provider: &'c mut P,
-}
-
-impl<'c, M: RawMutex, P: PacketProvider<Packet: Clone>, const RX_QUEUE_LEN: usize, const CONCURRENT_CH_NUM: usize> PacketChannels<'c, M, P, RX_QUEUE_LEN, CONCURRENT_CH_NUM> {
-    pub(crate) const fn new(packet_provider: &'c mut P) -> Self {
-        Self {
-            commands: Channel::new(),
-            responses: PubSubChannel::new(),
-            packet_provider
-        }
-    }
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct AppNetworkMap {
@@ -57,13 +48,13 @@ pub struct Shared<M: RawMutex, const TCP_SLOTS: usize> {
     pub(crate) gnss_slot: Slot<Signal<M, GnssReport>>,
     pub(crate) voltage_slot: Slot<Signal<M, VoltageWarning>>,
     pub(crate) io_config: Watch<M, BuildIoConfig, 1>,
-    pub(crate) tx_pipe: Pipe<M, 2048>,
-    pub(crate) rx_pipe: Pipe<M, 2048>,
 }
 
-pub struct ModemContext<'c, M: RawMutex, const TCP_SLOTS: usize> {
+pub struct ModemContext<M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usize> {
     pub(crate) shared: Shared<M, TCP_SLOTS>,
-    pub(crate) packet_channels: PacketChannels<'c, M, P, PACKET_QUEUE_LEN, CONCURRENT_CH_NUM>,
+    pub(crate) tx_pipe: Pipe<M, BUF_LEN>,
+    pub(crate) rx_pipe: Pipe<M, BUF_LEN>,
+    pub(crate) rx_timestamps: Channel<M, ReadTimestamp, 8>,
 }
 
 impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS>
@@ -88,24 +79,20 @@ where
             gnss_slot: Slot::new(Signal::new()),
             voltage_slot: Slot::new(Signal::new()),
             io_config: Watch::new(),
-            tx_pipe: Pipe::new(),
-            rx_pipe: Pipe::new(),
         }
     }
 }
 
-impl<'c, M, const TCP_SLOTS: usize> ModemContext<'c, M, TCP_SLOTS>
+impl<M, const TCP_SLOTS: usize, const BUF_LEN: usize> ModemContext<M, TCP_SLOTS, BUF_LEN>
 where
     M: RawMutex,
 {
-    pub fn new(
-        tcp: TcpContext<M, TCP_SLOTS>,
-        commands_buf: &'c mut [RawAtCommand],
-        response_buf: &'c mut [ResponseCode],
-    ) -> Self {
+    pub fn new(tcp: TcpContext<M, TCP_SLOTS>) -> Self {
         Self {
             shared: Shared::new(tcp),
-            packet_channels: PacketChannels::new(commands_buf, response_buf),
+            tx_pipe: Pipe::new(),
+            rx_pipe: Pipe::new(),
+            rx_timestamps: Channel::new(),
         }
     }
 }

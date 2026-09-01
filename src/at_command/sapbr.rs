@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -31,7 +31,7 @@ pub struct BearerSettings {
 }
 
 impl AtRequest for BearerSettings {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let con_param_type = match self.con_param_type {

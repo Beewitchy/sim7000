@@ -1,15 +1,15 @@
 //! Types for facilitating asynchronous dropping.
 //!
-//! For certain types it is necessary to run the descructor asynchronously. This is impossible with
-//! the regular Drop trait.
+//! For certain types it is necessary to run the descructor asynchronously. This is
+//! impossible with the regular Drop trait.
 //!
-//! This module provides the [AsyncDrop] type, which takes a [DropChannel] and a [DropMessage], and
-//! all it does is pass the [DropMessage] to the channel when the [AsyncDrop] is dropped. The
-//! intended use-case is embedding the [AsyncDrop] in another struct, and then letting the drop
-//! logic happen implicitly.
+//! This module provides the [AsyncDrop] type, which takes a [DropChannel] and a
+//! [DropMessage], and all it does is pass the [DropMessage] to the channel when the
+//! [AsyncDrop] is dropped. The intended use-case is embedding the [AsyncDrop] in
+//! another struct, and then letting the drop logic happen implicitly.
 //!
-//! The actual drop-logic will take place on another task dedicated to polling the [DropChannel]
-//! (see [DropPump](crate::pump::DropPump)).
+//! The actual drop-logic will take place on another task dedicated to polling the
+//! [DropChannel] (see [DropPump](crate::pump::DropPump)).
 //!
 //! Example
 //! ```ignore
@@ -19,14 +19,14 @@
 //! ```
 
 use core::mem::drop;
-use embassy_sync::{blocking_mutex::raw::RawMutex, channel::{Channel}};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Channel};
 
-use crate::{PacketProvider, PacketStorage, at_command::{CloseConnection, SetGnssPower}};
+use crate::Error;
+use crate::at_command::{CloseConnection, SetGnssPower};
 use crate::gnss::GNSS_SLOTS;
 use crate::log;
-use crate::modem::{CommandRunner, Shared};
+use crate::modem::{CommandRunner, Shared, unsolicited};
 use crate::tcp::MAX_TCP_SLOTS;
-use crate::Error;
 
 /// The capacity of the drop channel.
 /// Nust be at least the number of unique objects that can be dropped.
@@ -39,13 +39,19 @@ pub struct AsyncDrop<'c, M: RawMutex> {
     message: DropMessage,
 }
 
-impl<'c, M> AsyncDrop<'c, M> where M: RawMutex {
+impl<'c, M> AsyncDrop<'c, M>
+where
+    M: RawMutex,
+{
     pub fn new(channel: &'c DropChannel<M>, message: DropMessage) -> Self {
         AsyncDrop { channel, message }
     }
 }
 
-impl<M> Drop for AsyncDrop<'_, M> where M: RawMutex {
+impl<M> Drop for AsyncDrop<'_, M>
+where
+    M: RawMutex,
+{
     fn drop(&mut self) {
         if self.channel.try_send(self.message).is_err() {
             log::error!("Failed to drop {:?}: Drop channel full", self.message);
@@ -55,7 +61,8 @@ impl<M> Drop for AsyncDrop<'_, M> where M: RawMutex {
 
 /// This type facilitates asynchronous dropping. See module-level docs for details.
 ///
-/// This enum has one variant for each kind of type which needs asynchronous dropping.
+/// This enum has one variant for each kind of type which needs asynchronous
+/// dropping.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DropMessage {
@@ -68,7 +75,10 @@ pub enum DropMessage {
 
 impl DropMessage {
     /// Run the Drop logic for this message.
-    pub async fn run(&self, runner: &mut CommandRunner<'_>) -> Result<(), Error> {
+    pub async fn run<UnsolicitedParser: unsolicited::Parser>(
+        &self,
+        runner: &mut CommandRunner<'_, UnsolicitedParser>,
+    ) -> Result<(), Error> {
         log::debug!("Sending drop command for {:?}", self);
 
         /// It is Ok for the result to be a SimError
@@ -97,8 +107,8 @@ impl DropMessage {
         Ok(())
     }
 
-    /// Clean up logic that gets run after running the drop logic, regardless of whether the drop
-    /// logic errored or not.
+    /// Clean up logic that gets run after running the drop logic, regardless of
+    /// whether the drop logic errored or not.
     pub fn clean_up<M: RawMutex, const N: usize>(&self, ctx: &Shared<M, N>) {
         log::debug!("Cleaning up after {:?}", self);
         match self {

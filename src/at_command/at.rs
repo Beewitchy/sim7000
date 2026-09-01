@@ -8,7 +8,7 @@ use super::{AtRequest, CommandGroup, GenericOk, SimResult, RequestType};
 pub struct At;
 
 impl AtRequest for At {
-    type Response = SimResult<GenericOk>;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Basic);
     fn encode(&self, _: &mut impl core::fmt::Write) -> core::fmt::Result {
         Ok(())
@@ -21,7 +21,7 @@ impl AtRequest for At {
 pub struct Rep<R>(PhantomData<R>);
 
 impl<R: AtRequest> AtRequest for Rep<R> {
-    type Response = R::Response;
+    type ResultType = R::ResultType;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Context);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "A/")
@@ -71,7 +71,7 @@ impl<T: AtRequest> Repeat for T {
 pub struct PauseDataMode;
 
 impl AtRequest for PauseDataMode {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Context);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+++")
@@ -87,7 +87,7 @@ impl AtRequest for PauseDataMode {
 pub struct SwitchToDataMode(pub Option<u8>);
 
 impl AtRequest for SwitchToDataMode {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Context);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if let Some(n) = self.0 { write!(buf, "O{n}") } else { write!(buf, "O") }

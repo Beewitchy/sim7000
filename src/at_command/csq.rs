@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CSQ
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandG
 pub struct GetSignalQuality;
 
 impl AtRequest for GetSignalQuality {
-    type Response = (SignalQuality, GenericOk);
+    type ResultType = SimResult<GenericOk<SignalQuality>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CSQ")

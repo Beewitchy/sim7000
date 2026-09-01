@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -15,7 +15,7 @@ pub enum NbMode {
 pub struct SetNbMode(pub NbMode);
 
 impl AtRequest for SetNbMode {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMNB={}", self.0 as u8)

@@ -1,25 +1,23 @@
 use core::future::Future;
-use embassy_futures::select::{Either, Either4, select, select4};
+use embassy_futures::select::{Either4, select4};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    channel::{Receiver, Sender},
-    pipe::{Pipe, Reader, Writer},
-    pubsub::{ImmediatePublisher, Publisher, Subscriber},
+    channel::Sender,
+    pipe::{Reader, Writer},
     signal::Signal,
     watch,
 };
-use embassy_time::{Duration, Instant, with_timeout};
+use embassy_time::Instant;
 use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
 use crate::{
-    BuildIo, BuildIoConfig, Error, PacketProvider, PowerState, SplitIo, StateSignal,
-    at_command::unsolicited::{
-        self, GnssReport, NetworkRegistration, RegistrationStatus, VoltageWarning,
+    BuildIo, BuildIoConfig, Error, PowerState, SplitIo, at_command::unsolicited::{
+        NetworkRegistration, RegistrationStatus,
     },
     log,
-    modem::{AppNetworkMap, CommandPacket, ReadyState, TcpContext, power::PowerSignalListener},
-    read::{ModemReader, ReadTimestamp},
+    modem::power::PowerSignalListener,
+    read::ReadTimestamp,
 };
 
 /// Defines work that should be done for a communication task to

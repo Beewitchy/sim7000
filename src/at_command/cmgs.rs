@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk, WritePrompt};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, WritePrompt};
 
 /// AT+CMGS=...
 ///
@@ -17,7 +17,7 @@ pub struct SendSms {
 pub struct SendSmsMessage(pub String<160>);
 
 impl AtRequest for SendSms {
-    type Response = WritePrompt;
+    type ResultType = SimResult<WritePrompt>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMGS=\"{}\"", self.destination)
@@ -25,7 +25,7 @@ impl AtRequest for SendSms {
 }
 
 impl AtRequest for SendSmsMessage {
-    type Response = (MessageReference, GenericOk);
+    type ResultType = SimResult<GenericOk<MessageReference>>;
     const TYPE: RequestType = RequestType::NonCommand;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "{}\x1A", self.0)

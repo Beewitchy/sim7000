@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -42,7 +42,7 @@ impl BaudRate {
 pub struct SetBaudRate(pub BaudRate);
 
 impl AtRequest for SetBaudRate {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+IPR={}", self.0 as u32)

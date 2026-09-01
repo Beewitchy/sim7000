@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, cclk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, cclk};
 
 /// AT+CNTP=...
 #[derive(Debug)]
@@ -18,7 +18,7 @@ pub struct SynchronizeNetworkTime {
 pub struct Execute;
 
 impl AtRequest for SynchronizeNetworkTime {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
@@ -32,7 +32,7 @@ impl AtRequest for SynchronizeNetworkTime {
 }
 
 impl AtRequest for Execute {
-    type Response = (GenericOk, NetworkTime);
+    type ResultType = SimResult<(GenericOk, NetworkTime)>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "CNTP")
@@ -108,7 +108,7 @@ impl AtParseLine for NetworkTime {
 pub struct EnableLocalTimestamp(pub bool);
 
 impl AtRequest for EnableLocalTimestamp {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let param = match self.0 {

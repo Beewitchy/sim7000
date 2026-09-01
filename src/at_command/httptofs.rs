@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,7 +33,7 @@ pub struct DownloadToFileSystem {
 }
 
 impl AtRequest for DownloadToFileSystem {
-    type Response = (GenericOk, DownloadInfo);
+    type ResultType = SimResult<(GenericOk, DownloadInfo)>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+HTTPTOFS=\"{}\",\"{}\"", self.url, self.file_path)?;

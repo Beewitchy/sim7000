@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+GSN
 #[derive(Debug)]
@@ -8,7 +8,7 @@ use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, RequestType, CommandG
 pub struct GetImei;
 
 impl AtRequest for GetImei {
-    type Response = (Imei, GenericOk);
+    type ResultType = SimResult<GenericOk<Imei>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+GSN")

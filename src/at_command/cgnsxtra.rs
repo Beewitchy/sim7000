@@ -1,9 +1,7 @@
 use crate::util::collect_array;
 
 use super::{
-    RequestType, CommandGroup,
-    AtParseErr, AtParseLine, AtRequest, GenericOk, MetaResponse, cclk,
-    cgnscold::XtraStatus,
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MetaResponse, RequestType, SimResult, cclk, cgnscold::XtraStatus,
 };
 
 #[repr(u8)]
@@ -32,7 +30,7 @@ impl TryFrom<XtraStatus> for ToggleXtra {
 pub struct GnssXtra(pub ToggleXtra);
 
 impl AtRequest for GnssXtra {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSXTRA={}", self.0 as u8)
@@ -58,7 +56,7 @@ pub struct GnssXtraInfo {
 }
 
 impl AtRequest for GetGnssXtra {
-    type Response = (MetaResponse<XtraStatus, ToggleXtra>, GenericOk);
+    type ResultType = SimResult<GenericOk<MetaResponse<XtraStatus, ToggleXtra>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSXTRA?")
@@ -66,7 +64,7 @@ impl AtRequest for GetGnssXtra {
 }
 
 impl AtRequest for ValidateGnssXtra {
-    type Response = (Result<GnssXtraInfo, XtraStatus>, GenericOk);
+    type ResultType = SimResult<GenericOk<GnssXtraInfo>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSXTRA")

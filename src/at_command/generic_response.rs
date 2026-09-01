@@ -30,6 +30,10 @@ pub struct CloseOk {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CloseOkToken;
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ShutOk;
 
 pub type SimResult<T> = Result<T, SimError>;
@@ -39,6 +43,14 @@ impl<Response> MatchToken for GenericOk<Response> {
 
     fn match_token(line: &str) -> Option<(Self::Token, &str)> {
         (line == "OK").then_some(((), line))
+    }
+}
+
+impl AtParseLine for GenericOk {
+    fn from_line(line: &str, _: &embassy_time::Instant) -> Result<Self, AtParseErr> {
+        Self::match_token(line)
+            .map(|_| GenericOk(()))
+            .ok_or(AtParseErr::Mismatch)
     }
 }
 
@@ -60,6 +72,24 @@ impl MatchToken for SimError {
             Some((SimErrorKind::Command, line))
         } else {
             None
+        }
+    }
+}
+
+impl SimError {
+    pub fn from_str(line: &str) -> Result<Self, AtParseErr> {
+        if let Some(code) = line.strip_prefix("+CME ERROR:") {
+            Ok(SimError::CmeErr {
+                code: code.trim_start().parse()?,
+            })
+        } else if let Some(code) = line.strip_prefix("+CMS ERROR:") {
+            Ok(SimError::CmsErr {
+                code: code.trim_start().parse()?,
+            })
+        } else if line == "ERROR" {
+            Ok(SimError::Command)
+        } else {
+            Err(AtParseErr::Mismatch)
         }
     }
 }
@@ -94,48 +124,147 @@ impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
     }
 }
 
-impl SimError {
-    pub fn from_str(line: &str) -> Result<Self, AtParseErr> {
-        if let Some(code) = line.strip_prefix("+CME ERROR:") {
-            Ok(SimError::CmeErr {
-                code: code.trim_start().parse()?,
-            })
-        } else if let Some(code) = line.strip_prefix("+CMS ERROR:") {
-            Ok(SimError::CmsErr {
-                code: code.trim_start().parse()?,
-            })
-        } else if line == "ERROR" {
-            Ok(SimError::Command)
-        } else {
-            Err(AtParseErr::Mismatch)
+impl<Response: MatchToken> ParseResult for Result<(GenericOk, Response), SimError> {
+    type Response = (GenericOk, Response);
+    type Output = Response;
+    type Done = Response;
+    type Error = SimError;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        match error_token {
+            SimErrorKind::Command => Ok(SimError::Command),
+            SimErrorKind::Cme => Ok(SimError::CmeErr {
+                code: line.parse()?,
+            }),
+            SimErrorKind::Cms => Ok(SimError::CmsErr {
+                code: line.parse()?,
+            }),
         }
     }
-}
 
-impl AtParseLine for WritePrompt {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        line.starts_with(">")
-            .then(|| WritePrompt)
-            .ok_or(AtParseErr::Mismatch)
+    fn compose_result(
+        (GenericOk(()), response): Self::Response,
+        _: <Self::Done as MatchToken>::Token,
+        _: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        Ok(response)
     }
 }
 
-impl AtParseLine for CloseOk {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let connection = line
-            .strip_suffix(", CLOSE OK")
-            .ok_or(AtParseErr::Mismatch)?
-            .parse()?;
-
-        Ok(CloseOk { connection })
+impl MatchToken for WritePrompt {
+    type Token = WritePrompt;
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        line.strip_prefix(">").map(|remain| (WritePrompt, remain))
     }
 }
 
-impl AtParseLine for ShutOk {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        (line == "SHUT OK")
-            .then(|| ShutOk)
-            .ok_or(AtParseErr::Mismatch)
+impl ParseResult for Result<WritePrompt, SimError> {
+    type Response = ();
+    type Output = WritePrompt;
+    type Done = WritePrompt;
+    type Error = SimError;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        match error_token {
+            SimErrorKind::Command => Ok(SimError::Command),
+            SimErrorKind::Cme => Ok(SimError::CmeErr {
+                code: line.parse()?,
+            }),
+            SimErrorKind::Cms => Ok(SimError::CmsErr {
+                code: line.parse()?,
+            }),
+        }
+    }
+
+    fn compose_result(
+        (): Self::Response,
+        WritePrompt: <Self::Done as MatchToken>::Token,
+        _: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        Ok(WritePrompt)
+    }
+}
+
+impl MatchToken for CloseOk {
+    type Token = CloseOkToken;
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        line.strip_suffix(", CLOSE OK")
+            .map(|remain| (CloseOkToken, remain))
+    }
+}
+
+impl ParseResult for Result<CloseOk, SimError> {
+    type Response = ();
+    type Output = CloseOk;
+    type Done = CloseOk;
+    type Error = SimError;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        match error_token {
+            SimErrorKind::Command => Ok(SimError::Command),
+            SimErrorKind::Cme => Ok(SimError::CmeErr {
+                code: line.parse()?,
+            }),
+            SimErrorKind::Cms => Ok(SimError::CmsErr {
+                code: line.parse()?,
+            }),
+        }
+    }
+
+    fn compose_result(
+        (): Self::Response,
+        CloseOkToken: <Self::Done as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        Ok(CloseOk {
+            connection: line.parse().map_err(|err| ((), AtParseErr::from(err)))?,
+        })
+    }
+}
+
+impl MatchToken for ShutOk {
+    type Token = ShutOk;
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        (line == "SHUT OK").then(|| (ShutOk, ""))
+    }
+}
+
+impl ParseResult for Result<ShutOk, SimError> {
+    type Response = ();
+    type Output = ShutOk;
+    type Done = ShutOk;
+    type Error = SimError;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        match error_token {
+            SimErrorKind::Command => Ok(SimError::Command),
+            SimErrorKind::Cme => Ok(SimError::CmeErr {
+                code: line.parse()?,
+            }),
+            SimErrorKind::Cms => Ok(SimError::CmsErr {
+                code: line.parse()?,
+            }),
+        }
+    }
+
+    fn compose_result(
+        (): Self::Response,
+        ShutOk: <Self::Done as MatchToken>::Token,
+        _: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        Ok(ShutOk)
     }
 }
 

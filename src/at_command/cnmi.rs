@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CNMI=...
 #[derive(Debug)]
@@ -29,7 +29,7 @@ pub enum SmsMtMode {
 }
 
 impl AtRequest for SetSmsIndication {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(

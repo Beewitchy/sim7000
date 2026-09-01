@@ -1,4 +1,4 @@
-use super::{AtRequest, CommandGroup, GenericOk, RequestType};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CFUN arguments for both the set command and responses
 #[repr(u8)]
@@ -45,7 +45,7 @@ pub struct SetFunctionality(pub Functionality, pub Option<SetFunctionalityOption
 
 impl AtRequest for SetFunctionality {
     // The actual response is generated as an URC
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let fun = self.0 as u8;

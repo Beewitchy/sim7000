@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CBATCHK=...
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 pub struct EnableVBatCheck(pub bool);
 
 impl AtRequest for EnableVBatCheck {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if self.0 {

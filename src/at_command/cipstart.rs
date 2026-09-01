@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, CloseOk, RequestType, SimResult};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -26,7 +26,7 @@ pub struct Connect {
 }
 
 impl AtRequest for Connect {
-    type Response = GenericOk; // TODO: should have its own type
+    type ResultType = SimResult<CloseOk>; // TODO: should have its own type
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let mode = match self.mode {

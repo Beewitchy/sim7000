@@ -1,4 +1,4 @@
-use super::{AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CSCS=...
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub enum CharacterSet {
 }
 
 impl AtRequest for SetTeCharacterSet {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         let character_set = match self.0 {

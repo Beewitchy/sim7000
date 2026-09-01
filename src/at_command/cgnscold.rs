@@ -1,6 +1,6 @@
 use crate::{error::Xtra, Error};
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken, RequestType, SimResult};
 
 /// AT+CGNSCOLD
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl XtraStatus {
 }
 
 impl AtRequest for GnssColdStart {
-    type Response = (GenericOk, Option<XtraStatus>);
+    type ResultType = SimResult<(GenericOk, XtraStatus)>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSCOLD")
@@ -45,7 +45,7 @@ impl AtRequest for GnssColdStart {
 }
 
 impl AtRequest for GnssWarmStart {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSWARM")
@@ -53,7 +53,7 @@ impl AtRequest for GnssWarmStart {
 }
 
 impl AtRequest for GnssHotStart {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSHOT")
@@ -62,8 +62,7 @@ impl AtRequest for GnssHotStart {
 
 impl AtParseLine for XtraStatus {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("+CGNSXTRA:")
+        let (_, line) = Self::match_token(line)
             .ok_or(AtParseErr::Mismatch)?;
 
         match line.trim() {
@@ -72,6 +71,16 @@ impl AtParseLine for XtraStatus {
             "2" => Ok(XtraStatus::NotEffective),
             _ => Err("Invalid response, expected 0, 1 or 2".into()),
         }
+    }
+}
+
+impl MatchToken for XtraStatus {
+    type Token = XtraStatus;
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        let line = line
+            .strip_prefix("+CGNSXTRA:")?;
+        Some((XtraStatus::Success, line))
     }
 }
 

@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CGNAPN
 ///
@@ -21,7 +21,7 @@ pub struct NetworkApn {
 }
 
 impl AtRequest for GetNetworkApn {
-    type Response = (NetworkApn, GenericOk);
+    type ResultType = SimResult<GenericOk<NetworkApn>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNAPN")

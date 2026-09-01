@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CMGF=...
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, Gener
 pub struct SetSmsMessageFormat(pub SmsMessageFormat);
 
 impl AtRequest for SetSmsMessageFormat {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMGF={}", self.0 as u8)
@@ -19,7 +19,7 @@ impl AtRequest for SetSmsMessageFormat {
 pub struct GetSmsMessageFormat;
 
 impl AtRequest for GetSmsMessageFormat {
-    type Response = (SmsMessageFormat, GenericOk);
+    type ResultType = SimResult<GenericOk<SmsMessageFormat>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMGF?")

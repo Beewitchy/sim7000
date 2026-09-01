@@ -220,7 +220,7 @@ impl RequestType {
 #[cfg(feature = "defmt")]
 pub trait AtRequest: Debug + defmt::Format {
     /// The expected response type for this request
-    type Response;
+    type ResultType;
     /// The request type defines the prefix & end of line
     /// character that the command encoder will surround
     /// the request with
@@ -247,7 +247,7 @@ pub trait AtRequest: Debug + defmt::Format {
 
 #[cfg(not(feature = "defmt"))]
 pub trait AtRequest: Debug {
-    type Response;
+    type ResultType;
     const TYPE: RequestType;
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result;
     fn timeout(&self) -> Option<Duration> {
@@ -285,9 +285,9 @@ impl<T, E> From<Either<T, E>> for Result<T, E> {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Seq<T: Clone, const N: usize>(pub heapless::Vec<T, N>);
+pub struct Seq<T, const N: usize>(pub heapless::Vec<T, N>);
 
-impl<T: Clone, const N: usize> IntoIterator for Seq<T, N> {
+impl<T, const N: usize> IntoIterator for Seq<T, N> {
     type Item = <heapless::Vec<T, N> as IntoIterator>::Item;
     type IntoIter = <heapless::Vec<T, N> as IntoIterator>::IntoIter;
 

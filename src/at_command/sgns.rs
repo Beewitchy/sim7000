@@ -1,10 +1,12 @@
-#[cfg(feature = "defmt")]
-use defmt::bitflags;
 #[cfg(not(feature = "defmt"))]
 use bitflags::bitflags;
+#[cfg(feature = "defmt")]
+use defmt::bitflags;
 use embassy_time::Duration;
 
-use super::{AtParseErr, AtParseLine, AtRequest, GenericOk, SimError, RequestType, CommandGroup};
+use super::{
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, Either, GenericOk, MatchToken, ParseResult, RequestType, SimError, SimResult,
+};
 use crate::collect_array;
 
 /// Options for NMEA output
@@ -80,13 +82,17 @@ bitflags! {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AdssMode {
-    /// Do not delete any data. Perform hot start if the conditions are permitted after starting GNSS.
+    /// Do not delete any data. Perform hot start if the conditions are permitted
+    /// after starting GNSS.
     AttemptHotStart = 0,
-    /// Delete some related data. Perform warm start if the conditions are permitted after starting GNSS.
+    /// Delete some related data. Perform warm start if the conditions are permitted
+    /// after starting GNSS.
     AttemptWarmStart = 1,
-    /// Delete all assistance data except almanac data. Enforce cold start after starting GNSS.
+    /// Delete all assistance data except almanac data. Enforce cold start after
+    /// starting GNSS.
     CleanDataAndForceColdStart = 2,
-    /// Delete all assistance data except almanac and sv health data. Enforce xtra cold start after starting GNSS.
+    /// Delete all assistance data except almanac and sv health data. Enforce xtra
+    /// cold start after starting GNSS.
     ForceColdStart = 3,
     /// Delete all assistance data. Enforce reset start after starting GNSS.
     CleanDataAndForceColdStartWithReset = 4,
@@ -131,7 +137,7 @@ pub enum ConfigureGnss {
 }
 
 impl AtRequest for ConfigureGnss {
-    type Response = Result<GenericOk, SimError>;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         match self {
@@ -208,7 +214,7 @@ pub enum GnssCommand {
 }
 
 impl AtRequest for GnssCommand {
-    type Response = Result<GenericOk, Error>;
+    type ResultType = Result<GenericOk, Error>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         match self {
@@ -239,8 +245,9 @@ pub enum GnssCommandMode {
     Auto = 2,
 }
 
-/// +SGNSCMD:<mode>[,<date>],<time>[,<total_satellites>],<latitude>,<longitude>,<accuracy>,
-/// <altitude>,<altitude_mean_sea_level>,<speed>,<bearing>,<timestamp>,<flags>.
+/// +SGNSCMD:<mode>[,<date>],<time>[,<total_satellites>],<latitude>,<longitude>,
+/// <accuracy>, <altitude>,<altitude_mean_sea_level>,<speed>,<bearing>,<timestamp>,
+/// <flags>.
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssResult {
@@ -304,7 +311,6 @@ impl AtParseLine for GnssResult {
         let date_time = super::cclk::parse_sgnscmd_time(date, time, timestamp)
             .ok_or("invalid date-time argument")?;
 
-
         let latitude = latitude.parse()?;
         let longitude = longitude.parse()?;
         let accuracy = accuracy.parse()?;
@@ -316,7 +322,9 @@ impl AtParseLine for GnssResult {
             i64::from_str_radix(timestamp, 16)?
         } else {
             timestamp.parse()?
-        }.max(0).cast_unsigned();
+        }
+        .max(0)
+        .cast_unsigned();
 
         Ok(Self {
             mode,
@@ -367,16 +375,34 @@ pub enum Error {
     Unlicensed = 12,
     /// Best available position is invalid.
     NoValidPosition = 13,
+    /// Any error code not accounted for here
     UnknownError,
+    /// 'ERROR'
+    GenericError,
 }
 
-impl AtParseLine for Error {
-    fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("+SGNSERR:")
-            .ok_or(AtParseErr::Mismatch)?
-            .trim();
-        let code: u8 = line.parse().map_err(|_| "invalid parameter")?;
+enum ErrorToken {
+    SgnsErr,
+    Generic,
+}
+
+impl MatchToken for Error {
+    type Token = ErrorToken;
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        if let Some(r) = SimError::match_token(line).map(|(_, s)| (ErrorToken::Generic, s)) {
+            Some(r)
+        } else {
+            let line = line.strip_prefix("+SGNSERR:")?;
+            Some((ErrorToken::SgnsErr, line))
+        }
+    }
+}
+
+impl core::str::FromStr for Error {
+    type Err = AtParseErr;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let code: u8 = s.parse().map_err(|_| "invalid parameter")?;
         Ok(match code {
             0 => Self::Success,
             1 => Self::GeneralFailure,
@@ -394,5 +420,31 @@ impl AtParseLine for Error {
             13 => Self::NoValidPosition,
             _ => Self::UnknownError,
         })
+    }
+}
+
+impl ParseResult for Result<GenericOk, Error> {
+    type Response = ();
+    type Output = ();
+    type Done = GenericOk;
+    type Error = Error;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        use core::str::FromStr as _;
+        match error_token {
+            ErrorToken::Generic => Ok(Error::GenericError),
+            ErrorToken::SgnsErr => Ok(Error::from_str(line)?),
+        }
+    }
+
+    fn compose_result(
+        response: Self::Response,
+        (): <Self::Done as MatchToken>::Token,
+        _: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        Ok(response)
     }
 }

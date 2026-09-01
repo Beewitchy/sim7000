@@ -1,5 +1,5 @@
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CCID
 #[derive(Debug)]
@@ -7,7 +7,7 @@ use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, Gener
 pub struct ShowIccid;
 
 impl AtRequest for ShowIccid {
-    type Response = (Iccid, GenericOk);
+    type ResultType = SimResult<GenericOk<Iccid>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CCID")

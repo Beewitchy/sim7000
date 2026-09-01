@@ -2,7 +2,7 @@ use heapless::String;
 
 use super::{
     AtParseErr, AtParseLine, AtRequest, CommandGroup, FwVersion, GenericOk, Imei,
-    RequestType, SimError, stub_parser_prefix,
+    RequestType, SimResult, stub_parser_prefix,
 };
 
 /// ATI
@@ -11,12 +11,11 @@ use super::{
 pub struct GetProductInformation;
 
 impl AtRequest for GetProductInformation {
-    type Response = Result<
+    type ResultType = SimResult<
         GenericOk<(
             ((FwVersion, (Csub, ApRev)), QualityControlNumber),
             ProductInfoImei,
-        )>,
-        SimError,
+        )>
     >;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {

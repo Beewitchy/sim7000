@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -56,7 +56,7 @@ pub struct SetGnssWorkModeSet(pub Option<GnssWorkModeSet>);
 pub struct GetGnssWorkModeSet;
 
 impl AtRequest for SetGnssWorkModeSet {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if let Some(set) = self.0 {
@@ -76,7 +76,7 @@ impl AtRequest for SetGnssWorkModeSet {
 }
 
 impl AtRequest for GetGnssWorkModeSet {
-    type Response = (Option<GnssWorkModeSet>, GenericOk);
+    type ResultType = SimResult<GenericOk<Option<GnssWorkModeSet>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSMOD?")

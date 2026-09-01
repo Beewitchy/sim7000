@@ -36,7 +36,7 @@ pub struct SetAppNetwork {
 }
 
 impl AtRequest for SetAppNetwork {
-    type Response = SimResult<GenericOk>;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT={},\"{}\"", self.mode as u8, self.apn)
@@ -57,7 +57,7 @@ pub struct CNActPDP {
 pub struct SetAppNetworkPDP(pub CNActPDP);
 
 impl AtRequest for SetAppNetworkPDP {
-    type Response = SimResult<GenericOk>;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT={},{}", self.0.pdp_index, self.0.mode as u8)?;
@@ -74,7 +74,7 @@ impl AtRequest for SetAppNetworkPDP {
 pub struct GetAppNetworkPDP;
 
 impl AtRequest for GetAppNetworkPDP {
-    type Response = SimResult<GenericOk<Seq<CNActPDP, 4>>>;
+    type ResultType = SimResult<GenericOk<Seq<CNActPDP, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CNACT?")

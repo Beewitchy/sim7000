@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CIPSPRT=...
 #[repr(u8)]
@@ -16,7 +16,7 @@ pub enum SetCipSendPrompt {
 }
 
 impl AtRequest for SetCipSendPrompt {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CIPSPRT={}", *self as u8)

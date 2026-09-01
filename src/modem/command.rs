@@ -1,21 +1,18 @@
-use core::{
-    cmp::min, fmt::Write, future::Future, marker::PhantomData, mem::ManuallyDrop, ops::ControlFlow,
-};
+use core::{fmt::Write, future::Future, marker::PhantomData, mem::ManuallyDrop, ops::ControlFlow};
 use embassy_sync::{
     blocking_mutex::raw::RawMutex,
-    channel::{DynamicReceiver, Receiver, SendDynamicSender},
-    pipe::{DynamicReader, DynamicWriter, Reader, Writer},
-    pubsub::{SendDynPublisher, SendDynSubscriber},
-    zerocopy_channel::{ReceiveSlot, Receiver as ZerocopyReceiver, Sender as ZerocopySender},
+    channel::DynamicReceiver,
+    pipe::{DynamicReader, DynamicWriter},
+    zerocopy_channel::ReceiveSlot,
 };
 use embassy_time::{Duration, Instant, TimeoutError, with_deadline};
-use heapless::{String, Vec, string::StringView};
+use heapless::Vec;
 
 use crate::{
-    Error, PacketProvider, PacketStorage,
+    Error,
     at_command::{
         AtParseErr, AtParseLine, AtRequest, CommandGroup, Either, GenericOk, MatchToken,
-        MetaResponse, ParseResult, RequestType, Seq,
+        ParseResult, RequestType, Seq, SimResult,
     },
     log,
     modem::unsolicited,
@@ -62,7 +59,7 @@ struct WithTimeout<Request> {
 }
 
 impl<Request: AtRequest> AtRequest for WithTimeout<Request> {
-    type Response = Request::Response;
+    type ResultType = Request::ResultType;
     const TYPE: RequestType = Request::TYPE;
     fn encode(&self, buf: &mut impl Write) -> core::fmt::Result {
         self.request.encode(buf)
@@ -73,8 +70,15 @@ impl<Request: AtRequest> AtRequest for WithTimeout<Request> {
 }
 
 // Impl request for tuples to allow chained requests
-impl<R1: AtRequest, R2: AtRequest> AtRequest for (R1, R2) {
-    type Response = (R1::Response, R2::Response);
+impl<R1: AtRequest<ResultType = SimResult<GenericOk<R>>>, R2: AtRequest<ResultType: ParseResult>, R>
+    AtRequest for (R1, R2)
+{
+    type ResultType = SimResult<
+        GenericOk<(
+            <R1::ResultType as ParseResult>::Response,
+            <R2::ResultType as ParseResult>::Response,
+        )>,
+    >;
     const TYPE: RequestType = RequestType::Combined {
         first: match R1::TYPE {
             RequestType::Command(group) => group,
@@ -220,19 +224,19 @@ impl<'r, M: RawMutex, U, T> AsRef<U> for MappedReceiveSlotRef<'r, M, U, T> {
     }
 }
 
-pub struct CommandRunner<'r, Up: unsolicited::Parser> {
+pub struct CommandRunner<'r, UnsolicitedParser: unsolicited::Parser> {
     modem_reader: ModemReader<'r>,
     tx: DynamicWriter<'r>,
-    unsolicited_parser: Up,
+    unsolicited_parser: UnsolicitedParser,
     default_timeout: Option<Duration>,
 }
 
-impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
+impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedParser> {
     pub fn new(
         rx: DynamicReader<'r>,
         rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,
         tx: DynamicWriter<'r>,
-        unsolicited_parser: Up,
+        unsolicited_parser: UnsolicitedParser,
     ) -> Self {
         CommandRunner {
             modem_reader: ModemReader::new(rx, rx_timestamps),
@@ -259,6 +263,49 @@ impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
             Ok(Timeout::Unarmed(duration))
         } else {
             Ok(Timeout::None)
+        }
+    }
+
+    /// Wait for the modem to return a specific response.
+    pub async fn expect_break<DoneT, ErrorT, DoneToken, ErrorToken>(
+        &mut self,
+        timeout: Timeout,
+    ) -> ControlFlow<Result<Result<(DoneToken, &str), (ErrorToken, &str)>, Error>>
+    where
+        DoneT: MatchToken<Token = DoneToken>,
+        ErrorT: MatchToken<Token = ErrorToken>,
+    {
+        let start_instant = Instant::now();
+        let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
+        loop {
+            let (line, read_instant) =
+                match with_deadline(timeout_at, self.modem_reader.read_line()).await {
+                    Ok(Ok(read)) => read,
+                    Ok(Err(err)) => return ControlFlow::Break(Err(err)),
+                    Err(TimeoutError) => return ControlFlow::Break(Err(Error::Timeout)),
+                };
+            let read_instant = read_instant.unwrap_or(&start_instant);
+            if let Some(matched) = DoneT::match_token(line) {
+                return ControlFlow::Break(Ok(Ok(matched)));
+            }
+            if let Some(matched) = ErrorT::match_token(line) {
+                return ControlFlow::Break(Ok(Err(matched)));
+            }
+            match self.unsolicited_parser.parse(line, read_instant).await {
+                Ok(Some(urc)) => match self
+                    .unsolicited_parser
+                    .parse_all(&mut self.modem_reader, urc)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => return ControlFlow::Break(Err(err)),
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    #[cfg(any(feature = "log", feature = "defmt"))]
+                    log::warn!("Got unexpected response {:?}, {:?}", line, err,);
+                }
+            }
         }
     }
 
@@ -314,7 +361,14 @@ impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
     }
 
     /// Wait for the modem to return either of two response types.
-    pub async fn expect_either_response<DoneT, ErrorT, DoneToken, ErrorToken, T1: AtParseLine, T2: AtParseLine>(
+    pub async fn expect_either_response<
+        DoneT,
+        ErrorT,
+        DoneToken,
+        ErrorToken,
+        T1: AtParseLine,
+        T2: AtParseLine,
+    >(
         &mut self,
         timeout: Timeout,
     ) -> ControlFlow<Result<Result<(DoneToken, &str), (ErrorToken, &str)>, Error>, Either<T1, T2>>
@@ -382,18 +436,18 @@ impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
     }
 
     /// Send a request to the modem, and wait for the modem to respond.
-    pub async fn run<ResultParser, Request, Output>(
+    pub async fn run<ResultParser, Request, T, E>(
         &mut self,
         command: Request,
-    ) -> Result<Output, Error>
+    ) -> Result<Result<T, E>, Error>
     where
-        ResultParser: ParseResult<Output = Output> + ExpectResponse<ResultParser>,
-        Request: AtRequest<Response = ResultParser>,
+        Request: AtRequest<ResultType = ResultParser>,
+        ResultParser: ParseResult<Response: ExpectResult<ResultParser>, Output = T, Error = E>,
     {
         log::debug!("Running AT command: {:?}", command);
         let timeout = self.send_request(&command).await?;
         log::trace!("Waiting for response for AT command: {:?}", command);
-        let result = ResultParser::expect(self, timeout).await;
+        let result = ResultParser::Response::finalise(self, timeout).await;
         log::trace!("Completed AT command: {:?}", command);
 
         if let Err(e) = &result {
@@ -406,14 +460,14 @@ impl<'r, Up: unsolicited::Parser> CommandRunner<'r, Up> {
     /// Send a request to the modem and wait for the modem to respond.
     ///
     /// Use the provided timeout value instead of the configured one.
-    pub async fn run_with_timeout<Request, Response>(
+    pub async fn run_with_timeout<ResultParser, Request, T, E>(
         &mut self,
         timeout: Duration,
         request: Request,
-    ) -> Result<Response, Error>
+    ) -> Result<Result<T, E>, Error>
     where
-        Request: AtRequest<Response = Response>,
-        Response: ExpectResponse<M>,
+        Request: AtRequest<ResultType = ResultParser>,
+        ResultParser: ParseResult<Response: ExpectResult<ResultParser>, Output = T, Error = E>,
     {
         let runnable = WithTimeout { request, timeout };
         let result = self.run(runnable).await;
@@ -449,65 +503,196 @@ pub trait ResultParser {
 /// tuples matching (heapless::Vec<T1, N>, T2) which will parse 0..N T1 responses
 /// until a T2 response is encountered.
 pub trait ExpectResponse<P: ParseResult>: Sized {
-    type Output;
-    fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
+    /// Return the default response for this type, if there is one.
+    fn default_response() -> Option<Self>;
+    /// Try to parse the next response for this type.
+    fn expect<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
         timeout: Timeout,
-    ) -> impl Future<Output = Result<Self::Output, Error>>;
+    ) -> impl Future<
+        Output = ControlFlow<
+            Result<
+                Result<
+                    (<P::Done as MatchToken>::Token, &'runner str),
+                    (<P::Error as MatchToken>::Token, &'runner str),
+                >,
+                Error,
+            >,
+            Self,
+        >,
+    >;
+}
+
+/// Attempts to parse a complete structured result from responses implementing
+/// [ExpectResponse].
+pub trait ExpectResult<P: ParseResult>: Sized {
+    /// Return the default response for this type, if there is one.
+    fn default_response() -> Option<Self>;
+    /// Call [ExpectResponse] recursively to produce the composed result or error
+    /// with the given parser.
+    fn finalise<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
+        timeout: Timeout,
+    ) -> impl Future<Output = Result<Result<P::Output, P::Error>, Error>>;
 }
 
 // No response
 impl<P: ParseResult> ExpectResponse<P> for () {
-    type Output = ();
-    async fn expect<Up: unsolicited::Parser>(
-        _: &mut CommandRunner<'_, Up>,
-        _: Timeout,
-    ) -> Result<Self::Output, Error> {
-        Ok(())
+    fn default_response() -> Option<Self> {
+        Some(())
+    }
+    async fn expect<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
+        timeout: Timeout,
+    ) -> ControlFlow<
+        Result<
+            Result<
+                (<P::Done as MatchToken>::Token, &'runner str),
+                (<P::Error as MatchToken>::Token, &'runner str),
+            >,
+            Error,
+        >,
+        Self,
+    > {
+        runner
+            .expect_break::<P::Done, P::Error, _, _>(timeout)
+            .await
     }
 }
 
 impl<T: AtParseLine, P: ParseResult> ExpectResponse<P> for T {
-    type Output = T;
-    async fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
+    fn default_response() -> Option<Self> {
+        None
+    }
+    async fn expect<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
         timeout: Timeout,
-    ) -> Result<Self, Error> {
+    ) -> ControlFlow<
+        Result<
+            Result<
+                (<P::Done as MatchToken>::Token, &'runner str),
+                (<P::Error as MatchToken>::Token, &'runner str),
+            >,
+            Error,
+        >,
+        Self,
+    > {
         runner
-            .expect_response::<P, T>(timeout)
+            .expect_response::<P::Done, P::Error, _, _, T>(timeout)
             .await
-            .map(|response| response.clone())
     }
 }
 
-impl<T: ExpectResponse<P>, Y: AtParseLine, P: ParseResult> ExpectResponse<P> for (T, Y) {
-    type Output = (T::Output, Y);
-    async fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
+impl<R1: ExpectResponse<P>, R2: ExpectResponse<P>, P: ParseResult> ExpectResponse<P> for (R1, R2) {
+    fn default_response() -> Option<Self> {
+        None
+    }
+    async fn expect<'runner, Up: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, Up>,
         timeout: Timeout,
-    ) -> Result<Self::Output, Error> {
-        let r1 = <T as ExpectResponse<P>>::expect(runner, timeout).await?;
-        let r2 = <Y as ExpectResponse<P>>::expect(runner, timeout).await?;
-        Ok((r1, r2))
+    ) -> ControlFlow<
+        Result<
+            Result<
+                (<P::Done as MatchToken>::Token, &'runner str),
+                (<P::Error as MatchToken>::Token, &'runner str),
+            >,
+            Error,
+        >,
+        Self,
+    > {
+        let r1 = match <R1 as ExpectResponse<P>>::expect(runner, timeout).await {
+            ControlFlow::Break(done) => return ControlFlow::Break(done),
+            ControlFlow::Continue(r1) => r1,
+        };
+        let r2 = match <R2 as ExpectResponse<P>>::expect(runner, timeout).await {
+            ControlFlow::Break(done) => return ControlFlow::Break(done),
+            ControlFlow::Continue(r2) => r2,
+        };
+        ControlFlow::Continue((r1, r2))
     }
 }
 
-impl<T: AtParseLine, P: ParseResult, const N: usize> ExpectResponse<P> for Seq<T, N> {
-    async fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
+impl<T: ExpectResponse<P>, P: ParseResult> ExpectResult<P> for T
+where
+    P: ParseResult<Response = Self>,
+{
+    fn default_response() -> Option<Self> {
+        None
+    }
+    async fn finalise<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
         timeout: Timeout,
-    ) -> Result<Self, Error> {
-        let mut response_vec = heapless::Vec::new();
+    ) -> Result<Result<<P as ParseResult>::Output, <P as ParseResult>::Error>, Error> {
+        let mut maybe_response = P::Response::default_response();
         loop {
-            match runner.expect_response::<P, T>(timeout).await {
-                Ok(Some(item)) => response_vec
-                    .push(item.clone())
-                    .map_err(|_| Error::BufferOverflow)?,
-                Ok(None) => break,
-                Err(err) => return Err(err),
+            maybe_response = match (maybe_response, P::Response::expect(runner, timeout).await) {
+                (None, ControlFlow::Continue(response)) => Some(response),
+                (Some(response), ControlFlow::Continue(_)) => {
+                    log::warn!("Got unexpected duplicated response.");
+                    Some(response)
+                }
+                (None, ControlFlow::Break(Ok(Ok(_)))) => {
+                    log::error!("Got done result without expected response.");
+                    break Err(Error::UnknownResponse);
+                }
+                (Some(response), ControlFlow::Break(Ok(Ok((done_token, line))))) => {
+                    match P::compose_result(response, done_token, line) {
+                        Err((_response, _err)) => {
+                            log::error!(
+                                "Failed to parse 'done' result response, {:?}.",
+                                _err
+                            );
+                            break Err(Error::UnknownResponse);
+                        }
+                        Ok(output) => break Ok(Ok(output)),
+                    }
+                }
+                (_, ControlFlow::Break(Ok(Err((error_token, line))))) => {
+                    match P::parse_err(error_token, line) {
+                        Err(_err) => {
+                            log::error!(
+                                "Failed to parse 'error' result response, {:?}.",
+                                _err
+                            );
+                            break Err(Error::UnknownResponse);
+                        }
+                        Ok(error) => break Ok(Err(error)),
+                    }
+                }
+                (_, ControlFlow::Break(Err(err))) => break Err(err),
             }
         }
-        Ok(Seq(response_vec, done_response))
+    }
+}
+
+impl<T: ExpectResponse<P>, P, const N: usize> ExpectResult<P> for Seq<T, N>
+where
+    P: ParseResult<Response = Self>,
+{
+    fn default_response() -> Option<Self> {
+        None
+    }
+    async fn finalise<'runner, UnsolicitedParser: unsolicited::Parser>(
+        runner: &'runner mut CommandRunner<'_, UnsolicitedParser>,
+        timeout: Timeout,
+    ) -> Result<Result<<P as ParseResult>::Output, <P as ParseResult>::Error>, Error> {
+        let mut response_vec = heapless::Vec::new();
+        loop {
+            match T::expect(runner, timeout).await {
+                ControlFlow::Break(Ok(Ok((done, line)))) => {
+                    break Ok(Ok(
+                        P::compose_result(Seq(response_vec), done, line).map_err(|(_, err)| err)?
+                    ));
+                }
+                ControlFlow::Break(Ok(Err((error, line)))) => {
+                    break Ok(Err(P::parse_err(error, line)?));
+                }
+                ControlFlow::Break(Err(err)) => break Err(err),
+                ControlFlow::Continue(response) => {
+                    response_vec.push(response);
+                }
+            }
+        }
     }
 }
 
@@ -522,38 +707,38 @@ impl<T: AtParseLine, P: ParseResult, const N: usize> ExpectResponse<P> for Seq<T
 //     }
 // }
 
-impl<T1: AtParseLine, T2: AtParseLine, P: ParseResult> ExpectResponse<P> for Either<T1, T2> {
-    type Output = Self;
-    async fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
-        timeout: Timeout,
-    ) -> Result<Self::Output, Error> {
-        match runner.expect_either_response::<P::Done, P::Error, _, _, T1, T2>(timeout).await {
-            ControlFlow::Continue(Either::T1(item)) => Ok(Either::T1(item)),
-            ControlFlow::Continue(Either::T2(item)) => Ok(Either::T2(item)),
-            ControlFlow::Break(Ok(Ok((token, line)))) => {
-                Ok(Ok(P::compose_result()))
-            }
-            ControlFlow::Break(Ok(Err((token, line)))) => {
-                Ok(Err(P::parse_err(token, line)))
-            }
-            ControlFlow::Break(Err(err)) => Err(err),
-        }
-    }
-}
+// impl<T1: AtParseLine, T2: AtParseLine, P: ParseResult> ExpectResponse<P> for
+// Either<T1, T2> {     type Output = Self;
+//     async fn expect<Up: unsolicited::Parser>(
+//         runner: &mut CommandRunner<'_, Up>,
+//         timeout: Timeout,
+//     ) -> Result<Self::Output, Error> {
+//         match runner.expect_either_response::<P::Done, P::Error, _, _, T1,
+// T2>(timeout).await {             ControlFlow::Continue(Either::T1(item)) =>
+// Ok(Either::T1(item)),             ControlFlow::Continue(Either::T2(item)) =>
+// Ok(Either::T2(item)),             ControlFlow::Break(Ok(Ok((token, line)))) => {
+//                 Ok(Ok(P::compose_result()))
+//             }
+//             ControlFlow::Break(Ok(Err((token, line)))) => {
+//                 Ok(Err(P::parse_err(token, line)))
+//             }
+//             ControlFlow::Break(Err(err)) => Err(err),
+//         }
+//     }
+// }
 
-impl<Parsed: AtParseLine, Output: TryFrom<Parsed>, P: ParseResult> ExpectResponse<P>
-    for MetaResponse<Parsed, Output>
-{
-    type Output = Output;
-    async fn expect<Up: unsolicited::Parser>(
-        runner: &mut CommandRunner<'_, Up>,
-        timeout: Timeout,
-    ) -> Result<Self::Output, Error> {
-        let o = <Parsed as ExpectResponse<P>>::expect(runner, timeout)
-            .await?
-            .try_into()
-            .map_err(|_| Error::IncompatibleMapping)?;
-        Ok(o)
-    }
-}
+// impl<Parsed: AtParseLine, Output: TryFrom<Parsed>, P: ParseResult>
+// ExpectResponse<P>     for MetaResponse<Parsed, Output>
+// {
+//     type Output = Output;
+//     async fn expect<Up: unsolicited::Parser>(
+//         runner: &mut CommandRunner<'_, Up>,
+//         timeout: Timeout,
+//     ) -> Result<Self::Output, Error> {
+//         let o = <Parsed as ExpectResponse<P>>::expect(runner, timeout)
+//             .await?
+//             .try_into()
+//             .map_err(|_| Error::IncompatibleMapping)?;
+//         Ok(o)
+//     }
+// }

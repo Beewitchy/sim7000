@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, WritePrompt};
+use super::{AtRequest, CommandGroup, RequestType, SimResult, WritePrompt};
 
 /// AT+CIPSEND
 #[derive(Debug)]
@@ -9,7 +9,7 @@ pub struct IpSend {
 }
 
 impl AtRequest for IpSend {
-    type Response = WritePrompt;
+    type ResultType = SimResult<WritePrompt>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CIPSEND={},{}", self.connection, self.data_length)

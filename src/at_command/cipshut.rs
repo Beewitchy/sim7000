@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, ShutOk, RequestType, SimResult};
 
 /// AT+CIPSHUT
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 pub struct ShutConnections;
 
 impl AtRequest for ShutConnections {
-    type Response = GenericOk; // TODO: should have its own type
+    type ResultType = SimResult<ShutOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CIPSHUT")

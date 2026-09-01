@@ -1,4 +1,4 @@
-use super::{AtRequest, CommandGroup, GenericOk, RequestType};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// ATZ
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{AtRequest, CommandGroup, GenericOk, RequestType};
 pub struct ResetConfigurationToDefaults;
 
 impl AtRequest for ResetConfigurationToDefaults {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Basic);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "Z")

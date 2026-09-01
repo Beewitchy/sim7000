@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CSCLK=<1 or 0>
 #[derive(Debug)]
@@ -6,7 +6,7 @@ use super::{RequestType, CommandGroup, AtRequest, GenericOk};
 pub struct SetSlowClock(pub bool);
 
 impl AtRequest for SetSlowClock {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if self.0 {

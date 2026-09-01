@@ -1,4 +1,4 @@
-use crate::at_command::{AtParseErr, AtParseLine};
+use super::super::{AtParseErr, AtParseLine, MatchToken, ParseResult, SimError};
 
 // stub type
 /// Network time zone
@@ -18,17 +18,53 @@ pub enum PowerDown {
 impl AtParseLine for PowerDown {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
         // example: `NORMAL POWER DOWN`
-        let reason = line
-            .trim_end()
-            .strip_suffix("POWER DOWN")
+        let reason = Self::match_token(line)
             .ok_or(AtParseErr::Mismatch)?
-            .trim_end();
+            .1;
+        Self::parse(Self::Normal, reason)
+    }
+}
 
-        match reason {
+impl PowerDown {
+    pub fn parse(_: PowerDown, line: &str) -> Result<Self, AtParseErr> {
+        match line.trim_end() {
             "NORMAL" => Ok(PowerDown::Normal),
             "UNDER-VOLTAGE" => Ok(PowerDown::UnderVoltage),
             "OVER-VOLTAGE" => Ok(PowerDown::OverVoltage),
             _ => Err("Invalid power down reason".into()),
         }
+    }
+}
+
+impl MatchToken for PowerDown {
+    type Token = PowerDown;
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        let line = line
+            .trim_end()
+            .strip_suffix("POWER DOWN")?;
+        Some((PowerDown::Normal, line))
+    }
+}
+
+impl ParseResult for Result<PowerDown, SimError> {
+    type Response = ();
+    type Output = PowerDown;
+    type Done = PowerDown;
+    type Error = SimError;
+
+    fn parse_err(
+        error_token: <Self::Error as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Error, AtParseErr> {
+        Ok(SimError::Command)
+    }
+
+    fn compose_result(
+        (): Self::Response,
+        done_token: <Self::Done as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        PowerDown::parse(done_token, line).map_err(|err| ((), err))
     }
 }

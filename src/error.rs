@@ -1,6 +1,6 @@
 use embassy_time::TimeoutError;
 
-use crate::at_command::{SimError, httptofs::StatusCode};
+use crate::at_command::{SimError, httptofs::StatusCode, AtParseErr};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -64,6 +64,12 @@ impl embedded_io_async::Error for Error {
     }
 }
 
+impl From<SimError> for Error {
+    fn from(v: SimError) -> Self {
+        Self::Sim(v)
+    }
+}
+
 impl From<TimeoutError> for Error {
     fn from(_: TimeoutError) -> Self {
         Error::Timeout
@@ -73,5 +79,11 @@ impl From<TimeoutError> for Error {
 impl From<crate::BuildIoError> for Error {
     fn from(_: crate::BuildIoError) -> Self {
         Self::InvalidContext
+    }
+}
+
+impl From<AtParseErr> for Error {
+    fn from(_: AtParseErr) -> Self {
+        Error::UnknownResponse
     }
 }

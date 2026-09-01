@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk, cclk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, cclk};
 
 use embassy_time::Instant;
 
@@ -40,7 +40,7 @@ pub struct NavInfo {
 pub struct GetGnssReport;
 
 impl AtRequest for GetGnssReport {
-    type Response = (GnssReport, GenericOk);
+    type ResultType = SimResult<GenericOk<GnssReport>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSINF")

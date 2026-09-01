@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 
 use crate::parse_hex_or_dec::ParseHexOrDec as _;
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CCLK
 #[derive(Debug)]
@@ -15,7 +15,7 @@ impl GetTime {
 }
 
 impl AtRequest for GetTime {
-    type Response = (CclkTime, GenericOk);
+    type ResultType = SimResult<GenericOk<CclkTime>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CCLK?")

@@ -10,7 +10,7 @@ pub struct ReadSms {
 }
 
 impl AtRequest for ReadSms {
-    type Response = SimResult<GenericOk<(SmsHeader, SmsMessage)>>;
+    type ResultType = SimResult<GenericOk<(SmsHeader, SmsMessage)>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CMGR={}", self.index)

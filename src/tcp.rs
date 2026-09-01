@@ -1,14 +1,19 @@
 use cipstart::ConnectMode;
 use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::{blocking_mutex::raw::RawMutex, mutex::Mutex, pubsub::PubSubChannel};
-use embassy_time::{with_timeout, Duration, TimeoutError, Timer};
+use embassy_time::{Duration, TimeoutError, Timer, with_timeout};
 use embedded_io_async::{
     ErrorType, {Read, Write},
 };
-use futures::{select_biased, FutureExt};
+use futures::{FutureExt, select_biased};
 
 use crate::{
-    Error, PacketProvider, at_command::{At, at, cipsend, cipstart, unsolicited::ConnectionMessage}, drop::{AsyncDrop, DropChannel, DropMessage}, log, modem::{CommandRunner, TcpToken}, util::Lagged,
+    Error,
+    at_command::{At, at, cipsend, cipstart, unsolicited::ConnectionMessage},
+    drop::{AsyncDrop, DropChannel, DropMessage},
+    log,
+    modem::{CommandRunner, TcpToken, unsolicited},
+    util::Lagged,
 };
 
 /// The maximum number of concurrent TCP connections supported by the modem.
@@ -24,7 +29,6 @@ pub enum TcpError {
     SendFail,
     Closed,
 }
-
 
 impl core::fmt::Display for TcpError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -50,8 +54,9 @@ impl embedded_io_async::Error for TcpError {
 pub enum ConnectError {
     ConnectFailed,
 
-    /// No connection slots available, the max number of open connections has been reached.
-    /// For TCP, this number is [MAX_TCP_SLOTS], and is a hard limit set by the modem.
+    /// No connection slots available, the max number of open connections has been
+    /// reached. For TCP, this number is [MAX_TCP_SLOTS], and is a hard limit set
+    /// by the modem.
     NoFreeSlots,
 
     Other(crate::Error),
@@ -66,10 +71,10 @@ impl From<crate::Error> for ConnectError {
     }
 }
 
-pub struct TcpStream<'s, 'm, S: PacketProvider, M: RawMutex> {
+pub struct TcpStream<'s, 'm, M: RawMutex, UnsolicitedParser: unsolicited::Parser> {
     token: TcpToken<'s, M>,
     _drop: AsyncDrop<'s, M>,
-    commands: &'s Mutex<M, CommandRunner<'m, S>>,
+    commands: &'s Mutex<M, CommandRunner<'m, UnsolicitedParser>>,
 
     /// Whether the stream is closed
     closed: AtomicBool,
@@ -81,25 +86,41 @@ pub struct TcpStream<'s, 'm, S: PacketProvider, M: RawMutex> {
     timeout: Duration,
 }
 
-pub struct TcpReader<'s, 'c, S: PacketProvider, M: RawMutex> {
-    stream: &'s TcpStream<'s, 'c, S, M>,
+pub struct TcpReader<'s, 'c, M: RawMutex, UnsolicitedParser: unsolicited::Parser> {
+    stream: &'s TcpStream<'s, 'c, M, UnsolicitedParser>,
 }
 
-pub struct TcpWriter<'s, 'c, S: PacketProvider, M: RawMutex> {
-    stream: &'s TcpStream<'s, 'c, S, M>,
+pub struct TcpWriter<'s, 'c, M: RawMutex, UnsolicitedParser: unsolicited::Parser> {
+    stream: &'s TcpStream<'s, 'c, M, UnsolicitedParser>,
 }
 
-impl<S, M> ErrorType for TcpStream<'_, '_, S, M> where S: PacketProvider, M: RawMutex {
+impl<M, UnsolicitedParser> ErrorType for TcpStream<'_, '_, M, UnsolicitedParser>
+where
+    M: RawMutex,
+    UnsolicitedParser: unsolicited::Parser,
+{
     type Error = TcpError;
 }
-impl<S, M> ErrorType for TcpWriter<'_, '_, S, M> where S: PacketProvider, M: RawMutex {
+impl<M, UnsolicitedParser> ErrorType for TcpWriter<'_, '_, M, UnsolicitedParser>
+where
+    M: RawMutex,
+    UnsolicitedParser: unsolicited::Parser,
+{
     type Error = TcpError;
 }
-impl<S, M> ErrorType for TcpReader<'_, '_, S, M> where S: PacketProvider, M: RawMutex {
+impl<M, UnsolicitedParser> ErrorType for TcpReader<'_, '_, M, UnsolicitedParser>
+where
+    M: RawMutex,
+    UnsolicitedParser: unsolicited::Parser,
+{
     type Error = TcpError;
 }
 
-impl<S, M> Drop for TcpStream<'_, '_, S, M> where S: PacketProvider, M: RawMutex {
+impl<M, UnsolicitedParser> Drop for TcpStream<'_, '_, M, UnsolicitedParser>
+where
+    M: RawMutex,
+    UnsolicitedParser: unsolicited::Parser,
+{
     fn drop(&mut self) {
         // TODO: it's likely not sufficient to clear the buffer like this,
         // if the channel is full and the RxPump is blocked, more stuff might be added later
@@ -107,14 +128,18 @@ impl<S, M> Drop for TcpStream<'_, '_, S, M> where S: PacketProvider, M: RawMutex
     }
 }
 
-impl<'s, 'c, S, M> TcpStream<'s, 'c, S, M> where S: PacketProvider, M: RawMutex {
+impl<'s, 'c, M, UnsolicitedParser> TcpStream<'s, 'c, M, UnsolicitedParser>
+where
+    M: RawMutex,
+    UnsolicitedParser: unsolicited::Parser,
+{
     pub(crate) async fn connect(
         token: TcpToken<'s, M>,
         host: &str,
         port: u16,
         drop_channel: &'s DropChannel<M>,
-        commands: &'s Mutex<M, CommandRunner<'c, S>>,
-    ) -> Result<TcpStream<'s, 'c, M>, ConnectError> {
+        commands: &'s Mutex<M, CommandRunner<'c, UnsolicitedParser>>,
+    ) -> Result<TcpStream<'s, 'c, M, UnsolicitedParser>, ConnectError> {
         // create a drop guard here, so that if this function errors,
         // we make sure to clean up the connection
         let drop_guard = AsyncDrop::new(drop_channel, DropMessage::Connection(token.ordinal()));
@@ -161,7 +186,8 @@ impl<'s, 'c, S, M> TcpStream<'s, 'c, S, M> where S: PacketProvider, M: RawMutex 
 
                     ConnectionMessage::ConnectionFailed => return Err(ConnectError::ConnectFailed),
 
-                    // This should never happen, since we guard against connections already being used.
+                    // This should never happen, since we guard against connections already being
+                    // used.
                     msg => return Err(ConnectError::Unexpected(msg)),
                 },
             }
@@ -179,13 +205,19 @@ impl<'s, 'c, S, M> TcpStream<'s, 'c, S, M> where S: PacketProvider, M: RawMutex 
     }
 
     /// Split the stream into a reader and a writer half.
-    pub fn split(&mut self) -> (TcpReader<'_, 'c, M>, TcpWriter<'_, 'c, M>) {
+    pub fn split(
+        &mut self,
+    ) -> (
+        TcpReader<'_, 'c, M, UnsolicitedParser>,
+        TcpWriter<'_, 'c, M, UnsolicitedParser>,
+    ) {
         let reader = TcpReader { stream: self };
         let writer = TcpWriter { stream: self };
         (reader, writer)
     }
 
-    /// Listen to, and forward tcp events to both the read and the write half of this stream.
+    /// Listen to, and forward tcp events to both the read and the write half of this
+    /// stream.
     ///
     /// Must be used in a select in combination with awaiting `TcpStream.events`
     async fn handle_events(&self) -> ! {
@@ -206,7 +238,9 @@ impl<'s, 'c, S, M> TcpStream<'s, 'c, S, M> where S: PacketProvider, M: RawMutex 
     }
 }
 
-impl<M: RawMutex> Write for TcpStream<'_, '_, M> {
+impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Write
+    for TcpStream<'_, '_, M, UnsolicitedParser>
+{
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         let (_, mut writer) = self.split();
         writer.write(buf).await
@@ -218,14 +252,18 @@ impl<M: RawMutex> Write for TcpStream<'_, '_, M> {
     }
 }
 
-impl<M: RawMutex> Read for TcpStream<'_, '_, M> {
+impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Read
+    for TcpStream<'_, '_, M, UnsolicitedParser>
+{
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let (mut reader, _) = self.split();
         reader.read(buf).await
     }
 }
 
-impl<M: RawMutex> Write for TcpWriter<'_, '_, M> {
+impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Write
+    for TcpWriter<'_, '_, M, UnsolicitedParser>
+{
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         let stream = self.stream;
         let mut events = stream
@@ -233,9 +271,10 @@ impl<M: RawMutex> Write for TcpWriter<'_, '_, M> {
             .subscriber()
             .expect("claim tcp stream event subscriber");
 
-        /// The maximum number of bytes the modem can handle in a single CIPSEND command
-        // TODO: I *think* this is configurable in the modem, if so, we should check what this
-        // value actually is.
+        /// The maximum number of bytes the modem can handle in a single CIPSEND
+        /// command
+        // TODO: I *think* this is configurable in the modem, if so, we should check what
+        // this value actually is.
         const MODEM_WRITE_BUF: usize = 1024;
 
         for chunk in buf.chunks(MODEM_WRITE_BUF) {
@@ -285,7 +324,9 @@ impl<M: RawMutex> Write for TcpWriter<'_, '_, M> {
     }
 }
 
-impl<M: RawMutex> Read for TcpReader<'_, '_, M> {
+impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Read
+    for TcpReader<'_, '_, M, UnsolicitedParser>
+{
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let stream = self.stream;
 

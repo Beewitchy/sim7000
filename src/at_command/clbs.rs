@@ -3,8 +3,7 @@ use embassy_time::Instant;
 use crate::util::collect_array;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType,
-    cclk::{FromCclkStr as _, types::LocalDateTime},
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, cclk::{FromCclkStr as _, types::LocalDateTime},
 };
 
 /// AT+CLBS Base-station Location
@@ -20,7 +19,7 @@ pub enum BaseStationLocation {
 }
 
 impl AtRequest for BaseStationLocation {
-    type Response = (LocationInfoResult, GenericOk);
+    type ResultType = SimResult<GenericOk<LocationInfoResult>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         match self {
@@ -118,7 +117,7 @@ impl AtParseLine for LocationInfoResult {
                     longitude: longitude.parse()?,
                     accuracy: accuracy.parse()?,
                 };
-                if let Some((date_time, rest)) = LocalDateTime::from_cclk_str(rest).ok() {
+                if let Some((date_time, _)) = LocalDateTime::from_cclk_str(rest).ok() {
                     Ok(LocationInfoResult::Full {
                         location,
                         date_time,

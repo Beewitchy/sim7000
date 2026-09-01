@@ -2,7 +2,7 @@ use core::str::FromStr;
 
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// Maximum version length that we can read.
 ///
@@ -19,7 +19,7 @@ const MAX_VERSION_LEN: usize = 32;
 pub struct GetFwVersion;
 
 impl AtRequest for GetFwVersion {
-    type Response = (FwVersion, GenericOk);
+    type ResultType = SimResult<GenericOk<FwVersion>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGMR")

@@ -1,6 +1,6 @@
 use crate::util::collect_array;
 
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+COPS?
 #[derive(Debug)]
@@ -35,7 +35,7 @@ pub enum OperatorFormat {
 }
 
 impl AtRequest for GetOperatorInfo {
-    type Response = (OperatorInfo, GenericOk);
+    type ResultType = SimResult<GenericOk<OperatorInfo>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+COPS?")

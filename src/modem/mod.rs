@@ -4,17 +4,19 @@ pub mod power;
 pub mod unsolicited;
 
 use crate::{
-    BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower, PacketProvider, PowerState, at_command::{
-        AtRequest, CharacterSet, GenericOk, NetworkMode, SelectMessageService, Seq,
-        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SmsMessageFormat, ate, atz,
-        cbatchk, ccid, cclk,
+    BuildIo, BuildIoConfig, EndpointFlowControl, EndpointFlowControlKind, Error, ModemPower,
+    PowerState,
+    at_command::{
+        AtRequest, CharacterSet, NetworkMode, ParseResult, SelectMessageService, Seq,
+        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SimError, SmsMessageFormat, ate,
+        atz, cbatchk, ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg, cfgri, cfun, cgact, cgmr, cgnapn, cgnscold, cgnscpy,
         cgnsmod::{self, WorkMode},
         cgnspwr, cgnsurc, cgnsxtra, cgreg,
         cmee::{self, CMEErrorMode},
         cmgd::{DeleteFlag, DeleteSms},
-        cmgr::{ReadSms, SmsMessage},
+        cmgr::{ReadSms, SmsHeader, SmsMessage},
         cmgs::{self, SendSmsMessage},
         cmnb::{self, NbMode},
         cnact, cncfg,
@@ -24,9 +26,16 @@ use crate::{
         creg, csclk, csq, gsn, httptofs, ifc,
         ipr::{self, BaudRate},
         unsolicited::{CPin, NetworkRegistration, NewSmsIndex, RegistrationStatus},
-    }, drop::{AsyncDrop, DropMessage}, gnss::Gnss, log, pump::{RawIoPump}, read::ModemReader, tcp::{ConnectError, TcpStream}, voltage::VoltageWarner,
+    },
+    drop::{AsyncDrop, DropMessage},
+    gnss::Gnss,
+    log,
+    pump::RawIoPump,
+    read::ModemReader,
+    tcp::{ConnectError, TcpStream},
+    voltage::VoltageWarner,
 };
-pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse, CommandPacket};
+pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse};
 pub use context::*;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
@@ -35,18 +44,23 @@ use embassy_time::{Duration, Timer, with_timeout};
 use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
 use power::PowerSignalBroadcaster;
-use unsolicited::UnsolicitedMessageRunner;
 
 // todo: ellie (17.05.2026) - Implement different modem behaviors
 pub trait ModemBehavior {
-    fn post_init(&self, commands: &mut CommandRunner<'_>) -> Result<(), Error>;
-    fn authenticate(&self, commands: &mut CommandRunner<'_>) -> Result<(), Error>;
+    fn post_init<UnsolicitedParser: unsolicited::Parser>(
+        &self,
+        commands: &mut CommandRunner<'_, UnsolicitedParser>,
+    ) -> Result<(), Error>;
+    fn authenticate<UnsolicitedParser: unsolicited::Parser>(
+        &self,
+        commands: &mut CommandRunner<'_, UnsolicitedParser>,
+    ) -> Result<(), Error>;
 }
 
-pub struct Modem<'m, P, M: RawMutex, const TCP_SLOTS: usize> {
+pub struct Modem<'m, P, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usize> {
     context: &'m Shared<M, TCP_SLOTS>,
     active_signal: PowerSignalBroadcaster<'m>,
-    commands: Mutex<M, CommandRunner<'m>>,
+    commands: Mutex<M, CommandRunner<'m, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>>,
     power: P,
     supported_flow_control: EndpointFlowControlKind,
     max_baud_rate: BaudRate,
@@ -68,7 +82,8 @@ const NET_REG_DEFAULT: NetworkRegistration = NetworkRegistration {
     ci: None,
 };
 
-/// Helper macro that repeatedly attempts to evaluate an expression that returns a result.
+/// Helper macro that repeatedly attempts to evaluate an expression that returns a
+/// result.
 ///
 /// Returns the Result yielded by the expression if
 /// - the expression returns `Ok` at any point,
@@ -122,23 +137,39 @@ impl ReadyState {
     }
 }
 
-impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> Modem<'m, P, S, M, TCP_SLOTS> {
+impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usize>
+    Modem<'m, P, M, TCP_SLOTS, BUF_LEN>
+{
     pub fn new<'c, I: BuildIo>(
         io: I,
         power: P,
-        context: &'m mut ModemContext<'c, M, TCP_SLOTS>,
+        context: &'m mut ModemContext<M, TCP_SLOTS, BUF_LEN>,
     ) -> Result<
         (
-            Modem<'m, P, S, M, TCP_SLOTS>,
-            RawIoPump<'m, I, M>,
-            TxPump<'m, M>,
-            RxPump<'m, S, M, TCP_SLOTS>,
+            Modem<'m, P, M, TCP_SLOTS, BUF_LEN>,
+            RawIoPump<'m, I, M, BUF_LEN>,
         ),
         Error,
     > {
-        let (commands_sender, commands_receiver) = context.packet_channels.commands.split();
-        let (response_sender, response_receiver) = context.packet_channels.generic_response.split();
-        let commands = Mutex::new(CommandRunner::new(commands_sender, response_receiver));
+        let (rx_in, rx_out) = context.rx_pipe.split();
+        let (tx_in, tx_out) = context.tx_pipe.split();
+        let unsolicited_messages_state = unsolicited::UnsolicitedMessageState {
+            tcp: &context.shared.tcp,
+            gnss: context.shared.gnss_slot.peek(),
+            voltage_warning: context.shared.voltage_slot.peek(),
+            local_time: context.shared.local_time.sender(),
+            ready: context.shared.ready.sender(),
+            registration_events: &context.shared.registration_events,
+            sms_indices: context.shared.sms_indices.sender(),
+            pdp_status: context.shared.pdp_status.sender(),
+            active_signal: context.shared.active_signal.listener(),
+        };
+        let commands = Mutex::new(CommandRunner::new(
+            rx_in.into(),
+            context.rx_timestamps.dyn_receiver(),
+            tx_out.into(),
+            unsolicited_messages_state,
+        ));
         let supported_flow_control = io.supports_flow_control();
         let max_baud_rate = io.max_baud_rate();
         let modem = Modem {
@@ -180,37 +211,16 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
 
         let io_pump = RawIoPump {
             io,
+            rx: rx_out,
+            tx: tx_in,
+            total_read: 0,
+            read_timestamps: context.rx_timestamps.sender(),
             io_config: io_config.receiver().ok_or(Error::InvalidContext)?,
-            rx: &context.shared.rx_pipe,
-            tx: &context.shared.tx_pipe,
+            active_signal: context.shared.active_signal.listener(),
             power_state: PowerState::Off,
-            active_signal: context.shared.active_signal.listener(),
         };
 
-        // let mut lines = embassy_sync::zerocopy_channel::Channel::new(&mut [crate::pump::RxLine::new(), crate::pump::RxLine::new()]);
-        // let (lines_sender, lines_rx) = lines.split();
-
-        let rx_pump = RxPump {
-            reader: ModemReader::new(&context.shared.rx_pipe),
-            generic_response: response_sender,
-            // lines_sender,
-            registration_events: &context.shared.registration_events,
-            tcp: &context.shared.tcp,
-            gnss: context.shared.gnss_slot.peek(),
-            voltage_warning: context.shared.voltage_slot.peek(),
-            local_time: context.shared.local_time.sender(),
-            ready: context.shared.ready.sender(),
-            sms_indices: context.shared.sms_indices.sender(),
-            pdp_status: context.shared.pdp_status.sender(),
-            active_signal: context.shared.active_signal.listener(),
-        };
-
-        let tx_pump = TxPump {
-            writer: &context.shared.tx_pipe,
-            commands: commands_receiver,
-        };
-
-        Ok((modem, io_pump, tx_pump, rx_pump))
+        Ok((modem, io_pump))
     }
 
     // Wait for the RDY message to be received, power cycling the
@@ -300,7 +310,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         }
 
         // Set up flow control, the modem does not save this state on reboot.
-        self.configure_io(&mut commands).await?
+        self.configure_io(&mut commands).await?;
 
         // todo: ellie (16.05.2026) - sleep & slow-clock configuration
         commands.run(csclk::SetSlowClock(false)).await?;
@@ -364,7 +374,10 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         Ok(())
     }
 
-    async fn configure_io(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error> {
+    async fn configure_io(
+        &self,
+        commands: &mut CommandRunner<'_, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
+    ) -> Result<(), Error> {
         let flow_control_command: ifc::SetFlowControl = self.supported_flow_control.into();
         for _ in 0..5 {
             match with_timeout(
@@ -373,7 +386,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             )
             .await
             {
-                Ok(Ok(GenericOk)) => {
+                Ok(Ok(Ok(((), ())))) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate: self.max_baud_rate,
                         flow_control: match self.supported_flow_control {
@@ -396,7 +409,9 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                         flow_control: EndpointFlowControl::None,
                     });
                 }
-                Ok(Err(_)) => {
+                Ok(Ok(Err(_))) | Ok(Err(_)) => {
+                    // Current setting seems to work, but requested change
+                    // returned an error: keep current setting
                     break;
                 }
             }
@@ -443,7 +458,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             )
             .await
             {
-                Ok(Ok(GenericOk)) => {
+                Ok(Ok(Ok(()))) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate: self.max_baud_rate,
                         flow_control: match self.supported_flow_control {
@@ -461,7 +476,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                 | Ok(Err(Error::UnknownResponse))
                 | Ok(Err(Error::BufferOverflow))
                 | Err(embassy_time::TimeoutError) => {}
-                Ok(Err(_)) => {
+                Ok(Ok(Err(_))) | Ok(Err(_)) => {
                     break;
                 }
             }
@@ -481,9 +496,9 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             .await?;
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
-        // (GSM, LTE, etc). But for simplicity's sake we set up URCs for all of them. This is also
-        // what Simcom recommends. These commands can fail spuriously though, so we run each in a
-        // retry loop up to 5 times.
+        // (GSM, LTE, etc). But for simplicity's sake we set up URCs for all of them. This is
+        // also what Simcom recommends. These commands can fail spuriously though, so
+        // we run each in a retry loop up to 5 times.
         try_retry!(
             ("CREG", 5, Duration::from_secs(1)),
             commands
@@ -529,7 +544,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                 embassy_time::Timer::after_secs(2).await;
             }
         }
-        let Seq(_pdp_states, _) = commands.run(cgact::GetPdpContextActivation).await?;
+        let Seq(_pdp_states) = commands.run(cgact::GetPdpContextActivation).await??;
         log::info!("registered to network");
 
         // TODO: SIM7000
@@ -539,7 +554,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             Some(apn) => apn,
             None => {
                 log::debug!("no default APN set, checking network for suggested APN.");
-                let (network_apn, _) = commands.run(cgnapn::GetNetworkApn).await?;
+                let network_apn = commands.run(cgnapn::GetNetworkApn).await??;
                 let Some(apn) = network_apn.apn else {
                     log::debug!("no APN set");
                     return Err(Error::NoApn);
@@ -591,26 +606,29 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         //     .run(ciicr::StartGprs)
         //     .await?;
 
-        let (system_mode, _) = commands.run(ShowSystemMode).await?;
+        let system_mode = commands.run(ShowSystemMode).await??;
 
         log::info!("modem successfully activated");
         Ok(system_mode.system_mode)
     }
 
-    /// Resets the network priority to the priority provided when initializing [Modem::init] with [NetworkModeConfig::Automatic]
+    /// Resets the network priority to the priority provided when initializing
+    /// [Modem::init] with [NetworkModeConfig::Automatic]
     ///
-    /// If not initialized with [NetworkModeConfig::Automatic], this function has no effect
+    /// If not initialized with [NetworkModeConfig::Automatic], this function has no
+    /// effect
     pub fn reset_network_priority(&mut self) {
         self.current_network_priority = self.user_network_priority.clone();
     }
 
     /// Connect to the first available radio access technology (RAT).
-    /// If connected using LTE-CatM or GSM, set that RAT as first priority for next registration attempt
+    /// If connected using LTE-CatM or GSM, set that RAT as first priority for next
+    /// registration attempt
     ///
     /// Returns which technology ends up being used, or a timeout error
     async fn automatic_registration(
         &self,
-        commands: &mut CommandRunner<'_, M>,
+        commands: &mut CommandRunner<'_, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
     ) -> Result<RadioAccessTechnology, Error> {
         for mode in &self.current_network_priority {
             // Sometimes SIM isn't detected--cycle it to try
@@ -651,7 +669,10 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         Err(Error::Timeout)
     }
 
-    async fn wait_for_sim(&self, commands: &mut CommandRunner<'_, M>) -> Result<(), Error> {
+    async fn wait_for_sim(
+        &self,
+        commands: &mut CommandRunner<'_, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
+    ) -> Result<(), Error> {
         loop {
             // Check for the current known status first
             match self.context.ready.try_get() {
@@ -659,7 +680,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                 Some(ReadyState::PowerDown) => return Err(Error::InvalidContext),
                 None | Some(ReadyState::Ready) => {}
             }
-            let (pin_status, _) = commands.run(cpin::GetPinStatus).await?;
+            let pin_status = commands.run(cpin::GetPinStatus).await??;
             match pin_status {
                 CPin::NotReady => {}
                 CPin::NotInserted => {}
@@ -669,10 +690,10 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
     }
 
     async fn query_pdp_active(
-        commands: &mut CommandRunner<'_, M>,
+        commands: &mut CommandRunner<'_, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
         pdp_index: u8,
     ) -> Result<bool, Error> {
-        let status = commands.run(cnact::GetAppNetworkPDP).await?;
+        let status = commands.run(cnact::GetAppNetworkPDP).await??;
         Ok(status
             .into_iter()
             .find_map(|item| {
@@ -696,11 +717,20 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
             match commands.run(cpowd::NormalPowerDown).await {
-                Ok(GenericOk) => {
+                Ok(Ok(())) => {
                     log::debug!("Modem powered down");
                 }
+                Ok(Err(_err)) => {
+                    log::warn!(
+                        "Power down command didn't complete, {:?}. Continuing deactivate anyway, but modem may be in an unexpected state.",
+                        _err
+                    );
+                }
                 Err(_err) => {
-                    log::warn!("Power down command didn't complete, {:?}. Continuing deactivate anyway, but modem may be in an unexpected state.", _err);
+                    log::warn!(
+                        "Power down command didn't complete, {:?}. Continuing deactivate anyway, but modem may be in an unexpected state.",
+                        _err
+                    );
                 }
             }
         }
@@ -804,7 +834,8 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
     /// You should call this between dropping & re-establishing sockets in order
     ///  to clean up state.
     ///
-    /// This is done manually to allow the drop process to take exclusive control of the commands channels.
+    /// This is done manually to allow the drop process to take exclusive control of
+    /// the commands channels.
     pub async fn async_drop(&mut self) -> Result<(), Error> {
         let drop_channel = self.context.drop_channel.receiver();
         if drop_channel.is_empty() {
@@ -868,7 +899,12 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         Ok(())
     }
 
-    pub async fn get_sms_stream(&mut self) -> (SmsStream<'_, 'm, M>, SmsSignal<'m, M>) {
+    pub async fn get_sms_stream(
+        &mut self,
+    ) -> (
+        SmsStream<'_, 'm, M, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
+        SmsSignal<'m, M>,
+    ) {
         let sms_indicies = self.context.sms_indices.receiver();
         (
             SmsStream {
@@ -889,14 +925,14 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             .run(cmgs::SendSms {
                 destination: destination.try_into().unwrap_or_default(),
             })
-            .await?;
+            .await??;
         commands
             .run(SendSmsMessage(message.try_into().unwrap_or_default()))
             .await?;
         Ok(())
     }
 
-    pub async fn read_sms(&mut self) -> Result<SmsMessage, Error> {
+    pub async fn read_sms(&mut self) -> Result<(SmsHeader, SmsMessage), Error> {
         self.async_drop().await?;
 
         let index =
@@ -904,7 +940,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         log::info!("Reading SMS at index: {:?}", index);
 
         let mut commands = self.commands.lock().await;
-        let (sms, _) = commands.run(ReadSms { index: index.index }).await?;
+        let sms = commands.run(ReadSms { index: index.index }).await??;
         if let Err(e) = commands
             .run(DeleteSms(DeleteFlag::Index(index.index)))
             .await
@@ -919,7 +955,10 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         &mut self,
         host: &str,
         port: u16,
-    ) -> Result<TcpStream<'_, 'm, M>, ConnectError> {
+    ) -> Result<
+        TcpStream<'_, 'm, M, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>,
+        ConnectError,
+    > {
         self.async_drop().await?;
 
         let tcp_context = self.context.tcp.claim().ok_or(ConnectError::NoFreeSlots)?;
@@ -946,12 +985,15 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
 
     /// Start gnss & enable the work-modes for the given systems
     ///
-    /// The work mode priority list will be used to select either the first available or next
-    ///  available system, based on the current settings.
+    /// The work mode priority list will be used to select either the first available
+    /// or next  available system, based on the current settings.
     pub async fn claim_gnss(
         &mut self,
         work_mode_priority: &WorkModePriority<GnssSystem, 4>,
-    ) -> Result<Option<Gnss<'_, 'm, M>>, Error> {
+    ) -> Result<
+        Option<Gnss<'_, 'm, M, unsolicited::UnsolicitedMessageState<'m, M, TCP_SLOTS>>>,
+        Error,
+    > {
         self.async_drop().await?;
 
         let mut commands = self.commands.lock().await;
@@ -962,7 +1004,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         let drop_token = AsyncDrop::new(&self.context.drop_channel, DropMessage::Gnss);
         commands.run(cgnspwr::SetGnssPower(true)).await?;
 
-        let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
+        let current_set = commands.run(cgnsmod::GetGnssWorkModeSet).await??;
         let current_set = current_set.unwrap_or_default();
 
         let allow_multiple = (current_set.glonass as u8
@@ -1019,7 +1061,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
 
         reports.reset();
 
-        let (current_set, _) = commands.run(cgnsmod::GetGnssWorkModeSet).await?;
+        let current_set = commands.run(cgnsmod::GetGnssWorkModeSet).await??;
         if current_set != workmode_set {
             // Failed to configure
             return Err(Error::InvalidContext);
@@ -1084,7 +1126,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                 cid: 1,
             })
             .await?;
-        let (_, network_time) = commands.run(cntp::Execute).await?;
+        let (_, network_time) = commands.run(cntp::Execute).await??;
 
         commands
             .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -1104,8 +1146,8 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         &self,
     ) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
         self.run_command(cclk::GetTime)
-            .await
-            .map(|(cclk_time, _)| (cclk_time.time, cclk_time.instant))
+            .await?
+            .map(|cclk_time| (cclk_time.time, cclk_time.instant))
     }
 
     /// Enable timestamp status notifications from the cell network.
@@ -1197,7 +1239,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
                     retry_count: Some(retry_count),
                     timeout: Some(timeout),
                 })
-                .await?
+                .await??
                 .1;
             status_code = dl_info.status_code;
             if status_code.success().is_ok() && dl_info.data_length > 0 {
@@ -1218,10 +1260,11 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         status_code.success().map_err(Error::Httptofs)
     }
 
-    /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to assisted gps.
+    /// Enable the use of XTRA file for faster, more accurate GNSS fixes. Similar to
+    /// assisted gps.
     ///
-    /// Returns the status of the xtra file on success, which can be used to determine how much
-    ///  longer it should be valid for.
+    /// Returns the status of the xtra file on success, which can be used to
+    /// determine how much  longer it should be valid for.
     pub async fn enable_gnss_xtra(
         &mut self,
         #[cfg_attr(not(feature = "chrono"), allow(unused))] last_known_fix: Option<
@@ -1237,7 +1280,7 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
 
-        let (status, _) = commands.run(cgnsxtra::GetGnssXtra).await?;
+        let status = commands.run(cgnsxtra::GetGnssXtra).await??;
         if status.inner() == cgnsxtra::ToggleXtra::Enable {
             let _ = commands
                 .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Disable))
@@ -1284,10 +1327,10 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         }
         match cold_start {
             GnssStateRelevancy::Cold | GnssStateRelevancy::Unknown => {
-                commands.run(cgnscold::GnssColdStart).await?.1.success()?
+                commands.run(cgnscold::GnssColdStart).await??.1.success()?
             }
-            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?.1.success()?,
-            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?.1.success()?,
+            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?,
+            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?,
         }
 
         Ok(info)
@@ -1298,43 +1341,63 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
     }
 
     /// Run a single AT command on the modem. Use with care.
-    pub async fn run_command<C, Response>(&self, command: C) -> Result<Response, Error>
+    pub async fn run_command<C, ResultParser, Response>(
+        &self,
+        command: C,
+    ) -> Result<Response, Error>
     where
-        C: AtRequest<Response = Response>,
-        Response: ExpectResponse<M>,
+        C: AtRequest<ResultType = ResultParser>,
+        ResultParser: ParseResult<
+                Response: command::ExpectResult<ResultParser>,
+                Output = Response,
+                Error = SimError,
+            >,
     {
-        self.commands.lock().await.run(command).await
+        match self.commands.lock().await.run(command).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(err)) => Err(err.into()),
+            Err(err) => Err(err),
+        }
     }
 
-    /// Run a single AT command on the modem with the specified timeout. Use with care.
-    pub async fn run_command_with_timeout<C, Response>(
+    /// Run a single AT command on the modem with the specified timeout. Use with
+    /// care.
+    pub async fn run_command_with_timeout<C, ResultParser, Response>(
         &self,
         timeout: Duration,
         command: C,
     ) -> Result<Response, Error>
     where
-        C: AtRequest<Response = Response>,
-        Response: ExpectResponse<M>,
+        C: AtRequest<ResultType = ResultParser>,
+        ResultParser: ParseResult<
+                Response: command::ExpectResult<ResultParser>,
+                Output = Response,
+                Error = SimError,
+            >,
     {
-        self.commands
+        match self
+            .commands
             .lock()
             .await
             .run_with_timeout(timeout, command)
             .await
+        {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(err)) => Err(err.into()),
+            Err(err) => Err(err),
+        }
     }
 
     pub async fn query_system_info(&mut self) -> Result<cpsi::SystemInfo, Error> {
         self.wait_for_ready(1).await?;
         self.run_command(cpsi::GetSystemInfo)
             .await
-            .map(|(system_info, _)| system_info)
     }
 
     pub async fn query_signal(&mut self) -> Result<csq::SignalQuality, Error> {
         self.wait_for_ready(1).await?;
         self.run_command(csq::GetSignalQuality)
             .await
-            .map(|(response, _)| response)
     }
 
     /// Query the current cellular network operator.
@@ -1344,7 +1407,6 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
         self.wait_for_ready(1).await?;
         self.run_command(cops::GetOperatorInfo)
             .await
-            .map(|(response, _)| response)
     }
 
     pub async fn query_ip(&mut self) -> Result<heapless::Vec<cnact::CNActPDP, 4>, Error> {
@@ -1353,28 +1415,26 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
             ("CNACT", 5, Duration::from_millis(500)),
             self.run_command(cnact::GetAppNetworkPDP).await
         )
-        .map(|Seq(response, _)| response)
+        .map(|Seq(response)| response)
     }
 
     pub async fn query_iccid(&mut self) -> Result<ccid::Iccid, Error> {
         self.wait_for_ready(1).await?;
         self.run_command(ccid::ShowIccid)
             .await
-            .map(|(response, _)| response)
     }
 
     pub async fn query_imei(&mut self) -> Result<String<16>, Error> {
         self.wait_for_ready(1).await?;
         self.run_command(gsn::GetImei)
             .await
-            .map(|(response, _)| response.imei)
+            .map(|r| r.imei)
     }
 
     pub async fn query_firmware_version(&mut self) -> Result<cgmr::FwVersion, Error> {
         self.wait_for_ready(1).await?;
         self.run_command(cgmr::GetFwVersion)
             .await
-            .map(|(response, _)| response)
     }
 
     pub async fn sleep(&mut self) -> Result<(), Error> {
@@ -1391,9 +1451,9 @@ impl<'m, P: ModemPower, S: PacketProvider, M: RawMutex, const TCP_SLOTS: usize> 
     }
 }
 
-pub struct SmsStream<'a, 'c, S: PacketProvider, M: RawMutex> {
+pub struct SmsStream<'a, 'c, M: RawMutex, UnsolicitedParser: unsolicited::Parser> {
     sms_indicies: Receiver<'a, M, NewSmsIndex, 5>,
-    commands: &'a Mutex<M, CommandRunner<'c, S>>,
+    commands: &'a Mutex<M, CommandRunner<'c, UnsolicitedParser>>,
     // state: &'a Signal<CriticalSectionRawMutex, SmsState>,
 }
 
@@ -1426,16 +1486,17 @@ pub(crate) enum SmsState {
     Unavailable,
 }
 
-impl<M: RawMutex> SmsStream<'_, '_, M> {
-    pub async fn read_sms(&mut self) -> Result<SmsMessage, Error> {
+impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> SmsStream<'_, '_, M, UnsolicitedParser> {
+    pub async fn read_sms(&mut self) -> Result<(SmsHeader, SmsMessage), Error> {
         let index = with_timeout(Duration::from_secs(1), self.sms_indicies.receive()).await?;
         log::info!("Reading SMS at index: {:?}", index);
 
         let mut commands = self.commands.lock().await;
-        let (sms, _) = commands.run(ReadSms { index: index.index }).await?;
+        let sms = commands.run(ReadSms { index: index.index }).await??;
 
         if index.index > 8 {
-            // avoid filling up the sms storage with old messages that for some reason wasn't deleted
+            // avoid filling up the sms storage with old messages that for some reason wasn't
+            // deleted
             let _ = commands.run(DeleteSms(DeleteFlag::All)).await;
         } else {
             let _ = commands
@@ -1513,11 +1574,13 @@ pub enum RadioAccessTechnology {
 pub enum NetworkModeConfig {
     /// Custom automatic, not Simcom automatic.
     ///
-    /// Goes through the priority list in order. Connects to first available RAT, which will also be set as first priority for next time.
+    /// Goes through the priority list in order. Connects to first available RAT,
+    /// which will also be set as first priority for next time.
     Automatic {
         /// If none, priority will be: Lte-CatM > GSM > Lte-NbIoT
         priority: Option<Vec<RadioAccessTechnology, 3>>,
-        /// How much time is given for each radio access technology before trying the next
+        /// How much time is given for each radio access technology before trying the
+        /// next
         timeout: Duration,
         /// How many times to retry registration immediately
         ///  Sometimes this helps the sim connect quicker,

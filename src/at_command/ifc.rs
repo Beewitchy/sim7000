@@ -1,6 +1,6 @@
 use crate::EndpointFlowControlKind;
 
-use super::{AtRequest, GenericOk, RequestType, CommandGroup};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+IFC=...
 #[derive(Default, Clone, Copy, Debug)]
@@ -21,7 +21,7 @@ pub enum FlowControl {
 }
 
 impl AtRequest for SetFlowControl {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(

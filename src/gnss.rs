@@ -5,9 +5,9 @@ use futures::{FutureExt, select_biased};
 
 use crate::at_command::{cgnsinf, unsolicited};
 use crate::drop::{AsyncDrop, DropChannel, DropMessage};
-use crate::modem::CommandRunner;
+use crate::modem::{self, CommandRunner};
 use crate::modem::power::PowerSignalListener;
-use crate::{PacketProvider, PowerState, log};
+use crate::{PowerState, log};
 
 pub const GNSS_SLOTS: usize = 1;
 
@@ -15,12 +15,12 @@ pub const GNSS_SLOTS: usize = 1;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Closed;
 
-pub struct Gnss<'x, 'c, M: RawMutex> {
+pub struct Gnss<'x, 'c, M: RawMutex, UnsolicitedParser: modem::unsolicited::Parser> {
     /// Receiver of GnssReports.
     ///
     /// A value of None indicates that the modem will not send any more reports.
     unsolicited_reports: Option<&'x Signal<M, unsolicited::GnssReport>>,
-    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c>>,
+    commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, UnsolicitedParser>>,
     power_signal: PowerSignalListener<'x, M>,
     _drop: AsyncDrop<'x, M>,
 
@@ -28,13 +28,14 @@ pub struct Gnss<'x, 'c, M: RawMutex> {
     timeout: Duration,
 }
 
-impl<'x, 'c, M> Gnss<'x, 'c, M>
+impl<'x, 'c, M, UnsolicitedParser> Gnss<'x, 'c, M, UnsolicitedParser>
 where
     M: RawMutex,
+    UnsolicitedParser: modem::unsolicited::Parser,
 {
     pub(crate) fn new(
         unsolicited_reports: &'x Signal<M, unsolicited::GnssReport>,
-        commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c>>,
+        commands: &'x embassy_sync::mutex::Mutex<M, CommandRunner<'c, UnsolicitedParser>>,
         power_signal: PowerSignalListener<'x, M>,
         drop_channel: &'x DropChannel<M>,
         timeout: Duration,
@@ -49,8 +50,8 @@ where
     }
 
     pub async fn get_report(&mut self) -> Result<cgnsinf::GnssReport, super::Error> {
-        let (report, _) = self.commands.lock().await.run(cgnsinf::GetGnssReport).await?;
-        Ok(report)
+        let result = self.commands.lock().await.run(cgnsinf::GetGnssReport).await?;
+        Ok(result?)
     }
 
     /// Wait until the next GNSS report.

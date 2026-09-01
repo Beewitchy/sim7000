@@ -11,7 +11,7 @@ use super::{
 pub struct GetPdpContextActivation;
 
 impl AtRequest for GetPdpContextActivation {
-    type Response = SimResult<GenericOk<Seq<CGact, 4>>>;
+    type ResultType = SimResult<GenericOk<Seq<CGact, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGACT?")
@@ -26,7 +26,7 @@ pub struct CGact {
 }
 
 impl AtRequest for CGact {
-    type Response = SimResult<GenericOk<Seq<CGact, 4>>>;
+    type ResultType = SimResult<GenericOk<Seq<CGact, 4>>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGACT={},{}", self.cid, self.state as u8)

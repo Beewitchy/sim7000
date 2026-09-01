@@ -1,4 +1,4 @@
-use super::{RequestType, CommandGroup, AtParseErr, AtParseLine, AtRequest, GenericOk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,7 +76,7 @@ impl TryFrom<u8> for EdrxCycleLength {
 }
 
 impl AtRequest for ConfigureEDRX {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
@@ -93,7 +93,7 @@ impl AtRequest for ConfigureEDRX {
 pub struct GetEDRXSetting;
 
 impl AtRequest for GetEDRXSetting {
-    type Response = (ConfigureEDRX, GenericOk);
+    type ResultType = SimResult<GenericOk<ConfigureEDRX>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CEDRXS?",)
@@ -146,7 +146,7 @@ impl AtParseLine for ConfigureEDRX {
 pub struct TestEDRX;
 
 impl AtRequest for TestEDRX {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CEDRXS=?",)

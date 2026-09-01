@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{RequestType, CommandGroup, AtRequest, GenericOk};
+use super::{AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
 
 /// AT+CNCFG=...
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub struct PdpConfigure {
 }
 
 impl AtRequest for PdpConfigure {
-    type Response = GenericOk;
+    type ResultType = SimResult<GenericOk>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         if !self.username.is_empty() || !self.password.is_empty() {
