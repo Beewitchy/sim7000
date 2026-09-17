@@ -100,9 +100,9 @@ impl Default for BuildIoConfig {
 
 /// This trait is for building a `BuildIo::IO` that implements [SplitIo].
 ///
-/// The purpose of the trait is to let the use of this library to plug in UART driver types from
-/// whatever HAL they're using. The trait provides the ability for the `RawIoPump` to
-/// construct/destruct (enable/disable) the UART IO.
+/// The purpose of the trait is to let the use of this library to plug in UART driver
+/// types from whatever HAL they're using. The trait provides the ability for the
+/// `RawIoPump` to construct/destruct (enable/disable) the UART IO.
 pub trait BuildIo {
     type IO<'d>: SplitIo
     where
@@ -129,10 +129,10 @@ pub trait SplitIo: Sized {
 
     /// Split self into a reader and a writer.
     ///
-    /// **NOTE**: This method **must not** be called with None. Implementations are allowed to panic
-    /// on None. This method takes a `&mut Option<Self>` so that implementations can choose to
-    /// borrow `Self`, or to take ownership of it. This is to maintain compatibility with as many
-    /// HALs as possible.
+    /// **NOTE**: This method **must not** be called with None. Implementations are
+    /// allowed to panic on None. This method takes a `&mut Option<Self>` so that
+    /// implementations can choose to borrow `Self`, or to take ownership of it.
+    /// This is to maintain compatibility with as many HALs as possible.
     fn split(this: &mut Option<Self>) -> (Self::Reader<'_>, Self::Writer<'_>);
 
     fn reconfigure(&mut self, config: &BuildIoConfig) -> Result<(), BuildIoError>;
@@ -154,11 +154,13 @@ pub trait ModemPower {
     /// Reset the modem, e.g. by pulling on the modem reset pin.
     fn reset(&mut self) -> impl Future<Output = ()>;
 
-    /// Get the curren power state of the modem, e.g. by looking at the modem status pin.
+    /// Get the curren power state of the modem, e.g. by looking at the modem status
+    /// pin.
     fn state(&mut self) -> PowerState;
 }
 
-/// This macro sets up a modem for use, statically allocating pump tasks and channels.
+/// This macro sets up a modem for use, statically allocating pump tasks and
+/// channels.
 ///
 /// You can call `Modem::new` directly if you want more control over initialization.
 ///
@@ -186,9 +188,10 @@ pub trait ModemPower {
 /// };
 /// ```
 ///
-/// Note that `tcp_slots` is an optional argument that sets how many TCP sockets may be open
-/// concurrently. Default is [MAX_TCP_SLOTS](tcp::MAX_TCP_SLOTS), and the value may not exceed this.
-/// Each slot consumes a approx [TCP_RX_BUF_LEN](tcp::TCP_RX_BUF_LEN) bytes of RAM.
+/// Note that `tcp_slots` is an optional argument that sets how many TCP sockets may
+/// be open concurrently. Default is [MAX_TCP_SLOTS](tcp::MAX_TCP_SLOTS), and the
+/// value may not exceed this. Each slot consumes a approx
+/// [TCP_RX_BUF_LEN](tcp::TCP_RX_BUF_LEN) bytes of RAM.
 #[macro_export]
 macro_rules! spawn_modem {
     (

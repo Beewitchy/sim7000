@@ -11,9 +11,8 @@ use embassy_time::Instant;
 use embedded_io_async::{Read, Write};
 
 use crate::{
-    BuildIo, BuildIoConfig, Error, PowerState, SplitIo, at_command::unsolicited::{
-        NetworkRegistration, RegistrationStatus,
-    },
+    BuildIo, BuildIoConfig, Error, PowerState, SplitIo,
+    at_command::unsolicited::{NetworkRegistration, RegistrationStatus},
     log,
     modem::power::PowerSignalListener,
     read::ReadTimestamp,
@@ -51,7 +50,7 @@ pub struct RawIoPump<'context, RW, M: RawMutex, const BUF: usize> {
     pub(crate) rx: Writer<'context, M, BUF>,
     pub(crate) tx: Reader<'context, M, BUF>,
     pub(crate) total_read: usize,
-    pub(crate) read_timestamps: Sender<'context, M, ReadTimestamp, 8>,
+    pub(crate) read_timestamps: Sender<'context, M, ReadTimestamp, 10>,
     pub(crate) io_config: watch::Receiver<'context, M, BuildIoConfig, 1>,
     pub(crate) active_signal: PowerSignalListener<'context, M>,
     pub(crate) power_state: PowerState,
@@ -70,6 +69,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
             }
         };
         let (mut reader, mut writer) = RW::IO::split(&mut io);
+        let mut slow_pump_warned = false;
         match select4(
             self.io_config.changed(),
             async {
@@ -89,7 +89,12 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                         timestamp,
                     }) {
                         Ok(()) => {},
-                        Err(embassy_sync::channel::TrySendError::Full(_)) => log::warn!("Read timestamps buffer is full. Response read times will be inaccurate."),
+                        Err(embassy_sync::channel::TrySendError::Full(_)) => {
+                            if !slow_pump_warned {
+                                slow_pump_warned = true;
+                                log::warn!("Read timestamps buffer is full. Response read times will be inaccurate.")
+                            }
+                        }
                     }
                     self.total_read += bytes;
                     self.rx.write_all(&rx_buf[..bytes]).await;

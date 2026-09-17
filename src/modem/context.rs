@@ -54,7 +54,7 @@ pub struct ModemContext<M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
     pub(crate) shared: Shared<M, TCP_SLOTS>,
     pub(crate) tx_pipe: Pipe<M, BUF_LEN>,
     pub(crate) rx_pipe: Pipe<M, BUF_LEN>,
-    pub(crate) rx_timestamps: Channel<M, ReadTimestamp, 8>,
+    pub(crate) rx_timestamps: Channel<M, ReadTimestamp, 10>,
 }
 
 impl<M, const TCP_SLOTS: usize> Shared<M, TCP_SLOTS>

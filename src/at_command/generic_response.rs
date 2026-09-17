@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, MatchToken, ParseResult, ParseError, unsolicited};
+use super::{AtParseErr, AtParseLine, MatchToken, ParseError, ParseResult, unsolicited};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

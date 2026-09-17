@@ -612,6 +612,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         Ok(system_mode.system_mode)
     }
 
+    /// Should run in a loop to process unsolicited responses when not running other
+    /// commands
+    pub async fn idle(&self) -> Result<(), Error> {
+        self.commands.lock().await.idle().await
+    }
+
     /// Resets the network priority to the priority provided when initializing
     /// [Modem::init] with [NetworkModeConfig::Automatic]
     ///
@@ -636,14 +642,20 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             for retry in 0..self.reg_retries + 1 {
                 match &mode {
                     RadioAccessTechnology::LteCatM1 => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await??;
+                        commands
+                            .run(cnmp::SetNetworkMode(NetworkMode::Lte))
+                            .await??;
                         commands.run(cmnb::SetNbMode(NbMode::CatM)).await??;
                     }
                     RadioAccessTechnology::Gsm => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Gsm)).await??;
+                        commands
+                            .run(cnmp::SetNetworkMode(NetworkMode::Gsm))
+                            .await??;
                     }
                     RadioAccessTechnology::LteNbIot => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await??;
+                        commands
+                            .run(cnmp::SetNetworkMode(NetworkMode::Lte))
+                            .await??;
                         commands.run(cmnb::SetNbMode(NbMode::NbIot)).await??;
                     }
                 }
@@ -1279,19 +1291,30 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
 
-        let status = commands.run(cgnsxtra::GetGnssXtra).await?.map_err(Error::from)?;
+        let status = commands
+            .run(cgnsxtra::GetGnssXtra)
+            .await?
+            .map_err(Error::from)?;
         if status == cgnsxtra::ToggleXtra::Enable {
             let _ = commands
                 .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Disable))
                 .await;
         }
 
-        commands.run(cgnscpy::CopyXtraFile).await?.map_err(Error::from)?.success()?;
-        let info = commands.run(cgnsxtra::ValidateGnssXtra).await?.map_err(Error::from)?;
+        commands
+            .run(cgnscpy::CopyXtraFile)
+            .await?
+            .map_err(Error::from)?
+            .success()?;
+        let info = commands
+            .run(cgnsxtra::ValidateGnssXtra)
+            .await?
+            .map_err(Error::from)?;
 
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
-            .await?.map_err(Error::Sim)?;
+            .await?
+            .map_err(Error::Sim)?;
 
         #[cfg_attr(not(feature = "chrono"), allow(unused))]
         enum GnssStateRelevancy {
@@ -1324,11 +1347,19 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             cold_start = GnssStateRelevancy::Unknown;
         }
         match cold_start {
-            GnssStateRelevancy::Cold | GnssStateRelevancy::Unknown => {
-                commands.run(cgnscold::GnssColdStart).await?.map_err(Error::from)?.success()?
-            }
-            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?.map_err(Error::from)?,
-            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?.map_err(Error::from)?,
+            GnssStateRelevancy::Cold | GnssStateRelevancy::Unknown => commands
+                .run(cgnscold::GnssColdStart)
+                .await?
+                .map_err(Error::from)?
+                .success()?,
+            GnssStateRelevancy::Warm => commands
+                .run(cgnscold::GnssWarmStart)
+                .await?
+                .map_err(Error::from)?,
+            GnssStateRelevancy::Hot => commands
+                .run(cgnscold::GnssHotStart)
+                .await?
+                .map_err(Error::from)?,
         }
 
         Ok(info)
@@ -1388,14 +1419,12 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
     pub async fn query_system_info(&mut self) -> Result<cpsi::SystemInfo, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(cpsi::GetSystemInfo)
-            .await
+        self.run_command(cpsi::GetSystemInfo).await
     }
 
     pub async fn query_signal(&mut self) -> Result<csq::SignalQuality, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(csq::GetSignalQuality)
-            .await
+        self.run_command(csq::GetSignalQuality).await
     }
 
     /// Query the current cellular network operator.
@@ -1403,8 +1432,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
     /// This command can take up to 120 seconds to run.
     pub async fn query_operator_info(&mut self) -> Result<cops::OperatorInfo, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(cops::GetOperatorInfo)
-            .await
+        self.run_command(cops::GetOperatorInfo).await
     }
 
     pub async fn query_ip(&mut self) -> Result<heapless::Vec<cnact::CNActPDP, 4>, Error> {
@@ -1418,21 +1446,17 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
     pub async fn query_iccid(&mut self) -> Result<ccid::Iccid, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(ccid::ShowIccid)
-            .await
+        self.run_command(ccid::ShowIccid).await
     }
 
     pub async fn query_imei(&mut self) -> Result<String<16>, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(gsn::GetImei)
-            .await
-            .map(|r| r.imei)
+        self.run_command(gsn::GetImei).await.map(|r| r.imei)
     }
 
     pub async fn query_firmware_version(&mut self) -> Result<cgmr::FwVersion, Error> {
         self.wait_for_ready(1).await?;
-        self.run_command(cgmr::GetFwVersion)
-            .await
+        self.run_command(cgmr::GetFwVersion).await
     }
 
     pub async fn sleep(&mut self) -> Result<(), Error> {

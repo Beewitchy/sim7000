@@ -9,8 +9,8 @@ use heapless::Vec;
 use crate::{
     Error,
     at_command::{
-        AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken,
-        ParseError, ParseResult, RequestType, Seq, SimResult,
+        AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken, ParseError,
+        ParseResult, RequestType, Seq, SimResult,
     },
     log,
     modem::unsolicited,
@@ -221,7 +221,13 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     }
 
     /// Wait for the modem to return a specific response.
-    pub(crate) async fn expect_response<DoneT, ErrorT, DoneToken, ErrorToken, ResponseT: AtParseLine>(
+    pub(crate) async fn expect_response<
+        DoneT,
+        ErrorT,
+        DoneToken,
+        ErrorToken,
+        ResponseT: AtParseLine,
+    >(
         &mut self,
         timeout: Timeout,
     ) -> ControlFlow<Result<Result<(DoneToken, &str), (ErrorToken, &str)>, Error>, ResponseT>
@@ -265,8 +271,36 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
                 Ok(None) => {}
                 Err(err) => {
                     #[cfg(any(feature = "log", feature = "defmt"))]
-                    log::warn!("Got unexpected response {:?}, {:?}", line, err,);
+                    log::warn!("Got unknown response {:?}, {:?}", line, err,);
                 }
+            }
+        }
+    }
+
+    pub async fn idle(&mut self) -> Result<(), Error> {
+        let start_instant = embassy_time::Instant::now();
+        let (line, read_instant) = match with_deadline(
+            start_instant.saturating_add(AT_DEFAULT_TIMEOUT),
+            self.modem_reader.read_line(),
+        )
+        .await
+        {
+            Ok(Ok(read)) => read,
+            Ok(Err(err)) => return Err(err),
+            Err(TimeoutError) => return Err(Error::Timeout),
+        };
+        let read_instant = read_instant.unwrap_or(&start_instant);
+        match self.unsolicited_parser.parse(line, read_instant).await {
+            Ok(Some(urc)) => {
+                self.unsolicited_parser
+                    .parse_all(&mut self.modem_reader, urc)
+                    .await
+            }
+            Ok(None) => Ok(()),
+            Err(err) => {
+                #[cfg(any(feature = "log", feature = "defmt"))]
+                log::warn!("Got unknown response {:?}, {:?}", line, err,);
+                Err(Error::UnknownResponse)
             }
         }
     }
@@ -344,31 +378,27 @@ async fn run<
     timeout: Timeout,
 ) -> Result<Result<T, E>, Error>
 where
-    P::Response: ExpectResponse<P>
+    P::Response: ExpectResponse<P>,
 {
     let mut response = match P::Response::expect(runner, timeout).await {
-        ControlFlow::Continue(response) => {
-            response
-        }
+        ControlFlow::Continue(response) => response,
         ControlFlow::Break(Ok(Ok(_))) => {
             log::error!("Got done result before expected response.");
             return Err(Error::UnknownResponse);
         }
-        ControlFlow::Break(Ok(Err((error_token, line)))) => {
-            match P::parse_err(error_token, line) {
-                Err(_err) => {
-                    log::error!("Failed to parse 'error' result response, {:?}.", _err);
-                    return Err(Error::UnknownResponse);
-                }
-                Ok(error) => return Ok(Err(error)),
+        ControlFlow::Break(Ok(Err((error_token, line)))) => match P::parse_err(error_token, line) {
+            Err(_err) => {
+                log::error!("Failed to parse 'error' result response, {:?}.", _err);
+                return Err(Error::UnknownResponse);
             }
-        }
-        ControlFlow::Break(Err(err)) => return Err(err)
+            Ok(error) => return Ok(Err(error)),
+        },
+        ControlFlow::Break(Err(err)) => return Err(err),
     };
     loop {
         match response.expect_more(runner, timeout).await {
-            ControlFlow::Continue(()) => {},
-           ControlFlow::Break(Ok(Ok((done_token, line)))) => {
+            ControlFlow::Continue(()) => {}
+            ControlFlow::Break(Ok(Ok((done_token, line)))) => {
                 match P::compose_result(response, done_token, line) {
                     Err((_response, _err)) => {
                         log::error!("Failed to parse 'done' result response, {:?}.", _err);
