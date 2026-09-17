@@ -71,6 +71,7 @@ impl<'r> ModemReader<'r> {
     }
 
     fn consume_line(&mut self, line_len: usize) {
+        log::trace!("consume_line {:?}", line_len);
         self.rx.consume(line_len);
         self.total_consumed += line_len;
     }

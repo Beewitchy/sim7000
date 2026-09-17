@@ -103,12 +103,16 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
             async {
                 log::trace!("Begin Tx");
                 loop {
-                    let tx_buf = self.tx.fill_buf().await;
-                    log::trace!("Tx {:?}", tx_buf);
-                    match writer.write_all(tx_buf).await {
-                        Ok(()) => {}
-                        Err(_) => break Err(Error::Serial),
+                    let amt_read = {
+                        let tx_buf = self.tx.fill_buf().await;
+                        log::trace!("Tx {:?}", tx_buf);
+                        match writer.write_all(tx_buf).await {
+                            Ok(()) => {}
+                            Err(_) => break Err(Error::Serial),
+                        };
+                        tx_buf.len()
                     };
+                    self.tx.consume(amt_read);
                 }
             },
             self.active_signal.wait_for(PowerState::Off),
