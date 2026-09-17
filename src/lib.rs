@@ -2,7 +2,7 @@
 #![allow(clippy::unnecessary_lazy_evaluations)]
 #![allow(clippy::single_component_path_imports)]
 #![cfg_attr(feature = "nightly", feature(strip_circumfix))]
-#![cfg_attr(feature = "nightly", feature(option_reduce, fmt_debug))]
+#![cfg_attr(feature = "nightly", feature(option_reduce))]
 
 // TODO: at_command should probably be moved to its own crate
 pub mod at_command;
