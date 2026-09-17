@@ -256,13 +256,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 .run(ipr::SetBaudRate(baud_rate))
                 .await
             {
-                Ok(GenericOk) => {
+                Ok(Ok(())) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate,
                         flow_control: EndpointFlowControl::None,
                     });
                     return Ok(());
                 }
+                Ok(Err(_err)) => {}
                 Err(Error::Timeout) => {
                     self.context.io_config.sender().send(BuildIoConfig {
                         baud_rate,
@@ -305,18 +306,18 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         let mut commands = self.commands.lock().await;
 
         if reset_saved_config {
-            commands.run(atz::ResetConfigurationToDefaults).await?;
+            commands.run(atz::ResetConfigurationToDefaults).await??;
         }
 
         // Set up flow control, the modem does not save this state on reboot.
         self.configure_io(&mut commands).await?;
 
         // todo: ellie (16.05.2026) - sleep & slow-clock configuration
-        commands.run(csclk::SetSlowClock(false)).await?;
+        commands.run(csclk::SetSlowClock(false)).await??;
 
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
-            .await?;
+            .await??;
 
         match config.network_mode {
             NetworkModeConfig::Automatic {
@@ -335,16 +336,16 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 network_mode,
                 nb_mode,
             } => {
-                commands.run(cnmp::SetNetworkMode(network_mode)).await?;
-                commands.run(cmnb::SetNbMode(nb_mode)).await?;
+                commands.run(cnmp::SetNetworkMode(network_mode)).await??;
+                commands.run(cmnb::SetNbMode(nb_mode)).await??;
             }
         }
 
         // todo: ellie (16.05.2026) - add Ri interrupt pin & bat check configuration
         commands
             .run(cfgri::ConfigureRiPin(cfgri::RiPinMode::Off))
-            .await?;
-        commands.run(cbatchk::EnableVBatCheck(false)).await?;
+            .await??;
+        commands.run(cbatchk::EnableVBatCheck(false)).await??;
 
         // TODO: SIM7000
         // let current_edrx = commands
@@ -481,10 +482,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             }
         }
 
-        commands.run(ate::SetEcho(false)).await?;
+        commands.run(ate::SetEcho(false)).await??;
         commands
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
-            .await?;
+            .await??;
 
         let _ = with_timeout(Duration::from_secs(30), self.wait_for_sim(&mut commands))
             .await
@@ -492,7 +493,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
         let _ = commands
             .run(cfun::SetFunctionality(cfun::Functionality::Full, None))
-            .await?;
+            .await??;
 
         // CREG, CEREG, and CGREG are each necessary based on what network mode we're using
         // (GSM, LTE, etc). But for simplicity's sake we set up URCs for all of them. This is
@@ -503,19 +504,19 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             commands
                 .run(creg::ConfigureRegistrationUrc::EnableReg)
                 .await
-        )?;
+        )??;
         try_retry!(
             ("CEREG", 5, Duration::from_secs(1)),
             commands
                 .run(cereg::ConfigureRegistrationUrc::EnableReg)
                 .await
-        )?;
+        )??;
         try_retry!(
             ("CGREG", 5, Duration::from_secs(1)),
             commands
                 .run(cgreg::ConfigureRegistrationUrc::EnableReg)
                 .await
-        )?;
+        )??;
 
         let _ = commands.run(cgreg::GetRegistrationStatus).await;
 
@@ -571,7 +572,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                     mode: cnact::CnactMode::Deactive,
                     address: None,
                 }))
-                .await?;
+                .await??;
         }
 
         commands
@@ -580,7 +581,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 username: self.ap_username.try_into().unwrap_or_default(),
                 password: self.ap_password.try_into().unwrap_or_default(),
             })
-            .await?;
+            .await??;
 
         commands
             .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -588,7 +589,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 mode: cnact::CnactMode::Active,
                 address: None,
             }))
-            .await?;
+            .await??;
 
         // todo: ellie (17.05.2026) - different command set compatibility
         // TODO: SIM7000
@@ -635,15 +636,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             for retry in 0..self.reg_retries + 1 {
                 match &mode {
                     RadioAccessTechnology::LteCatM1 => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
-                        commands.run(cmnb::SetNbMode(NbMode::CatM)).await?;
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await??;
+                        commands.run(cmnb::SetNbMode(NbMode::CatM)).await??;
                     }
                     RadioAccessTechnology::Gsm => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Gsm)).await?;
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Gsm)).await??;
                     }
                     RadioAccessTechnology::LteNbIot => {
-                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await?;
-                        commands.run(cmnb::SetNbMode(NbMode::NbIot)).await?;
+                        commands.run(cnmp::SetNetworkMode(NetworkMode::Lte)).await??;
+                        commands.run(cmnb::SetNbMode(NbMode::NbIot)).await??;
                     }
                 }
 
@@ -885,15 +886,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             commands
                 .run(SetSmsMessageFormat(SmsMessageFormat::Text))
                 .await
-        )?;
-        commands.run(SelectMessageService).await?;
-        commands.run(SetTeCharacterSet(CharacterSet::GSM)).await?;
+        )??;
+        commands.run(SelectMessageService).await??;
+        commands.run(SetTeCharacterSet(CharacterSet::GSM)).await??;
         commands
             .run(SetSmsIndication {
                 mode: SmsIndicationMode::BufferWhenLinkBusy,
                 routing: SmsMtMode::Index,
             })
-            .await?;
+            .await??;
         self.context.sms_state.signal(SmsState::Available);
         Ok(())
     }
@@ -927,7 +928,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             .await??;
         commands
             .run(SendSmsMessage(message.try_into().unwrap_or_default()))
-            .await?;
+            .await??;
         Ok(())
     }
 
@@ -978,7 +979,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             .run(cgnsurc::ConfigureGnssUrc {
             period: 4, // TODO
         })
-            .await?;
+            .await??;
         Ok(())
     }
 
@@ -1001,7 +1002,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             return Ok(None);
         };
         let drop_token = AsyncDrop::new(&self.context.drop_channel, DropMessage::Gnss);
-        commands.run(cgnspwr::SetGnssPower(true)).await?;
+        commands.run(cgnspwr::SetGnssPower(true)).await??;
 
         let current_set = commands.run(cgnsmod::GetGnssWorkModeSet).await??;
         let current_set = current_set.unwrap_or_default();
@@ -1056,7 +1057,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         let workmode_set = Some(workmode_set);
         commands
             .run(cgnsmod::SetGnssWorkModeSet(workmode_set))
-            .await?;
+            .await??;
 
         reports.reset();
 
@@ -1206,7 +1207,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                     mode: cnact::CnactMode::Active,
                     address: None,
                 }))
-                .await?;
+                .await??;
         }
 
         let _ = commands.run(cntp::EnableLocalTimestamp(true)).await?;
@@ -1252,7 +1253,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                     mode: cnact::CnactMode::Deactive,
                     address: None,
                 }))
-                .await?;
+                .await??;
         }
 
         status_code.success().map_err(Error::Httptofs)
@@ -1290,7 +1291,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
-            .await?;
+            .await?.map_err(Error::Sim)?;
 
         #[cfg_attr(not(feature = "chrono"), allow(unused))]
         enum GnssStateRelevancy {
@@ -1519,17 +1520,17 @@ impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> SmsStream<'_, '_, M, U
                         destination: destination.try_into().unwrap_or_default(),
                     },
                 )
-                .await?;
+                .await??;
         } else {
             commands
                 .run(cmgs::SendSms {
                     destination: destination.try_into().unwrap_or_default(),
                 })
-                .await?;
+                .await??;
         }
         commands
             .run(SendSmsMessage(message.try_into().unwrap_or_default()))
-            .await?;
+            .await??;
         Ok(())
     }
 }

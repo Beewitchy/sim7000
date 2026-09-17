@@ -155,7 +155,7 @@ where
                 #[allow(clippy::unnecessary_fallible_conversions)] // heapless string panics on from
                 destination: host.try_into().map_err(|_| Error::BufferOverflow)?,
             })
-            .await?;
+            .await?.map_err(Error::Sim)?;
 
         // Wait for a response.
         // Based on testing, a connection will timeout after ~120 seconds, so we add our own
@@ -164,7 +164,7 @@ where
             match with_timeout(Duration::from_secs(6), token.next_message()).await {
                 Err(TimeoutError) => {
                     // Make sure the modem is still responding to commands.
-                    commands.lock().await.run(at::At).await?;
+                    commands.lock().await.run(at::At).await?.map_err(Error::Sim)?;
                 }
                 Ok(Err(Lagged)) => {
                     log::error!(
@@ -290,6 +290,7 @@ impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Write
                     data_length: chunk.len(),
                 })
                 .await
+                .map_err(|_| TcpError::SendFail)?
                 .map_err(|_| TcpError::SendFail)?;
 
             commands.send_bytes(chunk).await;

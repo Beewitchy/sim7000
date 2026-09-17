@@ -119,6 +119,7 @@ pub use sapbr::{BearerSettings, CmdType, ConParamType};
 /// This error type is reported by [AtParseLine] (and related
 /// parsers) when no value is produced.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AtParseErr {
     /// The parsed data appears to be a different type than what
     /// this parser is for. This may be not-an-error if the data

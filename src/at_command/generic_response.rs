@@ -229,7 +229,7 @@ impl defmt::Format for SimError {
     fn format(&self, fmt: defmt::Formatter) {
         use defmt::write;
         match self {
-            Self::Generic => write!(fmt, "'ERROR'"),
+            Self::Command => write!(fmt, "'ERROR'"),
             Self::CmeErr { code } => match code {
                 0 => write!(fmt, "0: phone failure"),
                 1 => write!(fmt, "1: no connection to phone"),

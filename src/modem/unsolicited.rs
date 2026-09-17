@@ -7,7 +7,7 @@ use crate::{
     Error, PowerState, StateSignal,
     at_command::{AtParseErr, AtParseLine as _, cfun, unsolicited},
     modem::{AppNetworkMap, ReadyState, TcpContext, power::PowerSignalListener},
-    read,
+    read, log
 };
 
 pub trait Runner {
