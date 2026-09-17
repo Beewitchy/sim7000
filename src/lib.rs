@@ -34,7 +34,7 @@ pub use at_command::BaudRate;
 pub use error::Error;
 pub use modem::power::PowerState;
 
-use core::{future::Future, ops::{Deref, DerefMut}};
+use core::future::Future;
 
 pub trait SerialError {
     type Error: core::fmt::Debug;

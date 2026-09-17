@@ -1,12 +1,9 @@
 use core::str::from_utf8;
 use embassy_sync::{
-    blocking_mutex::raw::RawMutex,
     channel::DynamicReceiver,
-    pipe::{DynamicReader, Pipe},
-    pubsub::Subscriber,
+    pipe::DynamicReader,
 };
 use embassy_time::Instant;
-use heapless::Vec;
 
 use crate::{Error, log};
 
@@ -27,7 +24,7 @@ pub struct ModemReader<'r> {
 }
 
 impl<'r> ModemReader<'r> {
-    pub fn new(
+    pub(crate) fn new(
         rx: DynamicReader<'r>,
         rx_timestamps: DynamicReceiver<'r, ReadTimestamp>,
     ) -> ModemReader<'r> {
@@ -86,8 +83,8 @@ impl<'r> ModemReader<'r> {
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
-            let buffer = self.rx.fill_buf().await;
             self.update_read_timestamp();
+            let buffer = self.rx.fill_buf().await;
             let line_timestamp = self.line_timestamp.as_ref();
             #[cfg(feature = "__trace_io")]
             if !buffer.is_empty() {
@@ -138,6 +135,7 @@ impl<'r> ModemReader<'r> {
             // Remove the previously read line from the buffer
             self.consume_line(line_len);
         }
+        let mut buf = buf;
         while !buf.is_empty() {
             match self.rx.read(buf).await {
                 0 => return Err(Error::Serial),

@@ -1,5 +1,5 @@
 use core::{
-    fmt::Debug, marker::PhantomData, num::{ParseFloatError, ParseIntError}, ops::ControlFlow,
+    fmt::Debug, num::{ParseFloatError, ParseIntError},
 };
 use embassy_time::{Duration, Instant};
 
@@ -7,7 +7,6 @@ pub mod generic_response;
 pub mod plmn;
 pub mod unsolicited;
 
-use cmgr::SmsMessage;
 pub use generic_response::{CloseOk, GenericOk, ShutOk, SimError, SimResult, WritePrompt};
 
 pub mod at;
@@ -398,40 +397,31 @@ impl<'r, R> core::ops::DerefMut for TimestampedRef<'r, R> {
     }
 }
 
-/// This can be used to support a secondary response type by borrowing the parser
-/// from another response type and implementing a [core::convert::TryFrom] conversion
-/// from the parsed type to the output type to retrieve the final data presented to
-/// the user.
-pub struct MetaResponse<Parsed, Output>(Output, PhantomData<Parsed>);
-
-impl<Parsed, Output> MetaResponse<Parsed, Output> {
-    pub const fn new(u: Output) -> Self {
-        Self(u, PhantomData)
-    }
-
-    pub fn inner(self) -> Output {
-        self.0
-    }
-}
-
-impl<Parsed, Output> AsRef<Output> for MetaResponse<Parsed, Output> {
-    fn as_ref(&self) -> &Output {
-        &self.0
-    }
-}
-
-impl<Parsed, Output> AsMut<Output> for MetaResponse<Parsed, Output> {
-    fn as_mut(&mut self) -> &mut Output {
-        &mut self.0
-    }
-}
-
 /// Defines simple matching logic for extracting a single token out of a str slice.
 pub trait MatchToken<R = Self> {
     /// The token type to be extracted
     type Token;
     /// Implements the matching behavior.
     fn match_token(line: &str) -> Option<(Self::Token, &str)>;
+}
+
+/// Parses a type of error.
+///
+/// Separated from ParseResult because many error types are reused across
+/// different result types.
+pub trait ParseError: Sized {
+    /// The type of token that signifies the an error occurring.
+    type Matcher: MatchToken;
+    /// Implements special parsing behavior for when the [Self::Error] token is
+    /// encountered.
+    ///
+    /// The line given will be the remaining text of the line that the [Self::Error]
+    /// token was matched on, for example if the line is "MYERROR 3" and
+    /// "MYERROR" was matched, the line argument provided will contain " 3".
+    fn parse_err(
+        error_token: <Self::Matcher as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self, AtParseErr>;
 }
 
 /// Defines the expected result & response types for a given command, along with any
@@ -450,17 +440,15 @@ pub trait ParseResult {
     /// the token parser and the final error because all currently supported
     /// error types are standalone rather than being combined with separate
     /// parsed data.
-    type Error: MatchToken;
+    type Error: ParseError;
     /// Implements special parsing behavior for when the [Self::Error] token is
     /// encountered.
-    ///
-    /// The line given will be the remaining text of the line that the [Self::Error]
-    /// token was matched on, for example if the line is "MYERROR 3" and
-    /// "MYERROR" was matched, the line argument provided will contain " 3".
     fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
+        error_token: <<Self::Error as ParseError>::Matcher as MatchToken>::Token,
         line: &str,
-    ) -> Result<Self::Error, AtParseErr>;
+    ) -> Result<Self::Error, AtParseErr> {
+        Self::Error::parse_err(error_token, line)
+    }
     /// Implements the behavior to 'compose' the collected responses into a success
     /// result.
     fn compose_result(

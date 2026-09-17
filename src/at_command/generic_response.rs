@@ -1,4 +1,4 @@
-use super::{AtParseErr, AtParseLine, MatchToken, ParseResult};
+use super::{AtParseErr, AtParseLine, MatchToken, ParseResult, ParseError, unsolicited};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -54,7 +54,7 @@ impl AtParseLine for GenericOk {
     }
 }
 
-enum SimErrorKind {
+pub enum SimErrorKind {
     Command,
     Cme,
     Cms,
@@ -94,16 +94,12 @@ impl SimError {
     }
 }
 
-impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
-    type Response = Response;
-    type Output = Response;
-    type Done = GenericOk<Response>;
-    type Error = SimError;
-
+impl ParseError for SimError {
+    type Matcher = Self;
     fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
+        error_token: <Self::Matcher as MatchToken>::Token,
         line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
+    ) -> Result<Self, AtParseErr> {
         match error_token {
             SimErrorKind::Command => Ok(SimError::Command),
             SimErrorKind::Cme => Ok(SimError::CmeErr {
@@ -114,7 +110,13 @@ impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
             }),
         }
     }
+}
 
+impl<R, E: ParseError> ParseResult for Result<GenericOk<R>, E> {
+    type Response = R;
+    type Output = R;
+    type Done = GenericOk<R>;
+    type Error = E;
     fn compose_result(
         response: Self::Response,
         (): <Self::Done as MatchToken>::Token,
@@ -124,27 +126,11 @@ impl<Response> ParseResult for Result<GenericOk<Response>, SimError> {
     }
 }
 
-impl<Response: MatchToken> ParseResult for Result<(GenericOk, Response), SimError> {
-    type Response = (GenericOk, Response);
-    type Output = Response;
-    type Done = Response;
-    type Error = SimError;
-
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        match error_token {
-            SimErrorKind::Command => Ok(SimError::Command),
-            SimErrorKind::Cme => Ok(SimError::CmeErr {
-                code: line.parse()?,
-            }),
-            SimErrorKind::Cms => Ok(SimError::CmsErr {
-                code: line.parse()?,
-            }),
-        }
-    }
-
+impl<R: MatchToken, E: ParseError> ParseResult for Result<(GenericOk, R), E> {
+    type Response = (GenericOk, R);
+    type Output = R;
+    type Done = R;
+    type Error = E;
     fn compose_result(
         (GenericOk(()), response): Self::Response,
         _: <Self::Done as MatchToken>::Token,
@@ -166,21 +152,6 @@ impl ParseResult for Result<WritePrompt, SimError> {
     type Output = WritePrompt;
     type Done = WritePrompt;
     type Error = SimError;
-
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        match error_token {
-            SimErrorKind::Command => Ok(SimError::Command),
-            SimErrorKind::Cme => Ok(SimError::CmeErr {
-                code: line.parse()?,
-            }),
-            SimErrorKind::Cms => Ok(SimError::CmsErr {
-                code: line.parse()?,
-            }),
-        }
-    }
 
     fn compose_result(
         (): Self::Response,
@@ -204,21 +175,6 @@ impl ParseResult for Result<CloseOk, SimError> {
     type Output = CloseOk;
     type Done = CloseOk;
     type Error = SimError;
-
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        match error_token {
-            SimErrorKind::Command => Ok(SimError::Command),
-            SimErrorKind::Cme => Ok(SimError::CmeErr {
-                code: line.parse()?,
-            }),
-            SimErrorKind::Cms => Ok(SimError::CmsErr {
-                code: line.parse()?,
-            }),
-        }
-    }
 
     fn compose_result(
         (): Self::Response,
@@ -244,27 +200,27 @@ impl ParseResult for Result<ShutOk, SimError> {
     type Done = ShutOk;
     type Error = SimError;
 
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        match error_token {
-            SimErrorKind::Command => Ok(SimError::Command),
-            SimErrorKind::Cme => Ok(SimError::CmeErr {
-                code: line.parse()?,
-            }),
-            SimErrorKind::Cms => Ok(SimError::CmsErr {
-                code: line.parse()?,
-            }),
-        }
-    }
-
     fn compose_result(
         (): Self::Response,
         ShutOk: <Self::Done as MatchToken>::Token,
         _: &str,
     ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
         Ok(ShutOk)
+    }
+}
+
+impl ParseResult for Result<unsolicited::PowerDown, SimError> {
+    type Response = ();
+    type Output = unsolicited::PowerDown;
+    type Done = unsolicited::PowerDown;
+    type Error = SimError;
+
+    fn compose_result(
+        (): Self::Response,
+        done_token: <Self::Done as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
+        unsolicited::PowerDown::parse(done_token, line).map_err(|err| ((), err))
     }
 }
 

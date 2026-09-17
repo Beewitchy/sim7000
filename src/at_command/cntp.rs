@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, cclk};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken, RequestType, SimResult, cclk};
 
 /// AT+CNTP=...
 #[derive(Debug)]
@@ -61,11 +61,23 @@ pub struct NetworkTime {
     pub code: SyncNtpStatusCode,
 }
 
+pub struct NetworkTimeToken;
+
+impl MatchToken for NetworkTime {
+    type Token = NetworkTimeToken;
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        line
+            .strip_prefix("+CNTP:")
+            .map(|line| (NetworkTimeToken, line))
+    }
+}
+
 impl AtParseLine for NetworkTime {
     fn from_line(line: &str, instant: &Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("+CNTP:")
+        let line = Self::match_token(line)
             .ok_or(AtParseErr::Mismatch)?
+            .1
             .trim();
 
         use cclk::FromCclkStr as _;

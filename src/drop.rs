@@ -100,7 +100,7 @@ impl DropMessage {
                     .or_else(sim_may_fail)?;
             }
             DropMessage::Gnss => {
-                runner.run(SetGnssPower(false)).await?;
+                runner.run(SetGnssPower(false)).await??;
             }
         }
 

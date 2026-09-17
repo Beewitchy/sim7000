@@ -1,7 +1,7 @@
 use crate::util::collect_array;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MetaResponse, RequestType, SimResult, cclk, cgnscold::XtraStatus,
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult, cclk, cgnscold::XtraStatus,
 };
 
 #[repr(u8)]
@@ -56,7 +56,7 @@ pub struct GnssXtraInfo {
 }
 
 impl AtRequest for GetGnssXtra {
-    type ResultType = SimResult<GenericOk<MetaResponse<XtraStatus, ToggleXtra>>>;
+    type ResultType = SimResult<GenericOk<ToggleXtra>>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(buf, "+CGNSXTRA?")

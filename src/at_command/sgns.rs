@@ -5,7 +5,7 @@ use defmt::bitflags;
 use embassy_time::Duration;
 
 use super::{
-    AtParseErr, AtParseLine, AtRequest, CommandGroup, Either, GenericOk, MatchToken, ParseResult, RequestType, SimError, SimResult,
+    AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken, ParseError, RequestType, SimError, SimResult,
 };
 use crate::collect_array;
 
@@ -381,7 +381,7 @@ pub enum Error {
     GenericError,
 }
 
-enum ErrorToken {
+pub enum ErrorToken {
     SgnsErr,
     Generic,
 }
@@ -394,6 +394,20 @@ impl MatchToken for Error {
         } else {
             let line = line.strip_prefix("+SGNSERR:")?;
             Some((ErrorToken::SgnsErr, line))
+        }
+    }
+}
+
+impl ParseError for Error {
+    type Matcher = Self;
+    fn parse_err(
+        error_token: <Self::Matcher as MatchToken>::Token,
+        line: &str,
+    ) -> Result<Self, AtParseErr> {
+        use core::str::FromStr as _;
+        match error_token {
+            ErrorToken::Generic => Ok(Error::GenericError),
+            ErrorToken::SgnsErr => Ok(Error::from_str(line)?),
         }
     }
 }
@@ -420,31 +434,5 @@ impl core::str::FromStr for Error {
             13 => Self::NoValidPosition,
             _ => Self::UnknownError,
         })
-    }
-}
-
-impl ParseResult for Result<GenericOk, Error> {
-    type Response = ();
-    type Output = ();
-    type Done = GenericOk;
-    type Error = Error;
-
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        use core::str::FromStr as _;
-        match error_token {
-            ErrorToken::Generic => Ok(Error::GenericError),
-            ErrorToken::SgnsErr => Ok(Error::from_str(line)?),
-        }
-    }
-
-    fn compose_result(
-        response: Self::Response,
-        (): <Self::Done as MatchToken>::Token,
-        _: &str,
-    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
-        Ok(response)
     }
 }

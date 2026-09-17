@@ -1,4 +1,4 @@
-use super::super::{AtParseErr, AtParseLine, MatchToken, ParseResult, SimError};
+use super::super::{AtParseErr, AtParseLine, MatchToken};
 
 // stub type
 /// Network time zone
@@ -44,27 +44,5 @@ impl MatchToken for PowerDown {
             .trim_end()
             .strip_suffix("POWER DOWN")?;
         Some((PowerDown::Normal, line))
-    }
-}
-
-impl ParseResult for Result<PowerDown, SimError> {
-    type Response = ();
-    type Output = PowerDown;
-    type Done = PowerDown;
-    type Error = SimError;
-
-    fn parse_err(
-        error_token: <Self::Error as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Error, AtParseErr> {
-        Ok(SimError::Command)
-    }
-
-    fn compose_result(
-        (): Self::Response,
-        done_token: <Self::Done as MatchToken>::Token,
-        line: &str,
-    ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
-        PowerDown::parse(done_token, line).map_err(|err| ((), err))
     }
 }

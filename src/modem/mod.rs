@@ -31,11 +31,10 @@ use crate::{
     gnss::Gnss,
     log,
     pump::RawIoPump,
-    read::ModemReader,
     tcp::{ConnectError, TcpStream},
     voltage::VoltageWarner,
 };
-pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner, ExpectResponse};
+pub use command::{AT_DEFAULT_TIMEOUT, CommandRunner};
 pub use context::*;
 use embassy_sync::{
     blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
@@ -717,7 +716,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             log::trace!("sending power-down command");
             let mut commands = self.commands.lock().await;
             match commands.run(cpowd::NormalPowerDown).await {
-                Ok(Ok(())) => {
+                Ok(Ok(_)) => {
                     log::debug!("Modem powered down");
                 }
                 Ok(Err(_err)) => {
@@ -1094,7 +1093,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 mode: cnact::CnactMode::Active,
                 address: None,
             }))
-            .await?;
+            .await??;
 
         // TODO: SIM7000
         // let apn = self.apn.as_ref().ok_or(Error::NoApn)?.clone();
@@ -1113,7 +1112,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         //     })
         //     .await?;
 
-        commands.run(cntpcid::SetGprsBearerProfileId(1)).await?;
+        commands.run(cntpcid::SetGprsBearerProfileId(1)).await??;
 
         let timezone_quarter_hours = timezone
             .standard_offset_from_utc()
@@ -1125,8 +1124,8 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 timezone_quarter_hours,
                 cid: 1,
             })
-            .await?;
-        let (_, network_time) = commands.run(cntp::Execute).await??;
+            .await??;
+        let network_time = commands.run(cntp::Execute).await??;
 
         commands
             .run(cnact::SetAppNetworkPDP(cnact::CNActPDP {
@@ -1134,7 +1133,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 mode: cnact::CnactMode::Deactive,
                 address: None,
             }))
-            .await?;
+            .await??;
 
         Ok(network_time)
     }
@@ -1146,7 +1145,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         &self,
     ) -> Result<(cclk::types::LocalDateTime, embassy_time::Instant), Error> {
         self.run_command(cclk::GetTime)
-            .await?
+            .await
             .map(|cclk_time| (cclk_time.time, cclk_time.instant))
     }
 
@@ -1239,8 +1238,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                     retry_count: Some(retry_count),
                     timeout: Some(timeout),
                 })
-                .await??
-                .1;
+                .await??;
             status_code = dl_info.status_code;
             if status_code.success().is_ok() && dl_info.data_length > 0 {
                 break;
@@ -1280,16 +1278,15 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
 
         let _ = commands.run(cgnspwr::SetGnssPower(false)).await;
 
-        let status = commands.run(cgnsxtra::GetGnssXtra).await??;
-        if status.inner() == cgnsxtra::ToggleXtra::Enable {
+        let status = commands.run(cgnsxtra::GetGnssXtra).await?.map_err(Error::from)?;
+        if status == cgnsxtra::ToggleXtra::Enable {
             let _ = commands
                 .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Disable))
                 .await;
         }
 
-        commands.run(cgnscpy::CopyXtraFile).await?.0.success()?;
-        let (info, _) = commands.run(cgnsxtra::ValidateGnssXtra).await?;
-        let info = info?;
+        commands.run(cgnscpy::CopyXtraFile).await?.map_err(Error::from)?.success()?;
+        let info = commands.run(cgnsxtra::ValidateGnssXtra).await?.map_err(Error::from)?;
 
         commands
             .run(cgnsxtra::GnssXtra(cgnsxtra::ToggleXtra::Enable))
@@ -1327,10 +1324,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         }
         match cold_start {
             GnssStateRelevancy::Cold | GnssStateRelevancy::Unknown => {
-                commands.run(cgnscold::GnssColdStart).await??.1.success()?
+                commands.run(cgnscold::GnssColdStart).await?.map_err(Error::from)?.success()?
             }
-            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?,
-            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?,
+            GnssStateRelevancy::Warm => commands.run(cgnscold::GnssWarmStart).await?.map_err(Error::from)?,
+            GnssStateRelevancy::Hot => commands.run(cgnscold::GnssHotStart).await?.map_err(Error::from)?,
         }
 
         Ok(info)
@@ -1348,7 +1345,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
     where
         C: AtRequest<ResultType = ResultParser>,
         ResultParser: ParseResult<
-                Response: command::ExpectResult<ResultParser>,
+                Response: command::ExpectResponse<ResultParser>,
                 Output = Response,
                 Error = SimError,
             >,
@@ -1370,7 +1367,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
     where
         C: AtRequest<ResultType = ResultParser>,
         ResultParser: ParseResult<
-                Response: command::ExpectResult<ResultParser>,
+                Response: command::ExpectResponse<ResultParser>,
                 Output = Response,
                 Error = SimError,
             >,

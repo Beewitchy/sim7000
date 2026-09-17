@@ -1,6 +1,6 @@
 use heapless::String;
 
-use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, RequestType, SimResult};
+use super::{AtParseErr, AtParseLine, AtRequest, CommandGroup, GenericOk, MatchToken, RequestType, SimResult};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,11 +71,23 @@ impl StatusCode {
     }
 }
 
+pub struct DownloadInfoToken;
+
+impl MatchToken for DownloadInfo {
+    type Token = DownloadInfoToken;
+
+    fn match_token(line: &str) -> Option<(Self::Token, &str)> {
+        line
+            .strip_prefix("+HTTPTOFS:")
+            .map(|v| (DownloadInfoToken, v))
+    }
+}
+
 impl AtParseLine for DownloadInfo {
     fn from_line(line: &str, _instant: &embassy_time::Instant) -> Result<Self, AtParseErr> {
-        let line = line
-            .strip_prefix("+HTTPTOFS:")
+        let line = DownloadInfo::match_token(line)
             .ok_or(AtParseErr::Mismatch)?
+            .1
             .trim();
         let (status_code, data_length) = match line.split_once(',') {
             Some(t) => t,

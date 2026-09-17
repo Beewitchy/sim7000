@@ -9,7 +9,6 @@ use embassy_sync::{
 };
 use embassy_time::Instant;
 use embedded_io_async::{Read, Write};
-use heapless::Vec;
 
 use crate::{
     BuildIo, BuildIoConfig, Error, PowerState, SplitIo, at_command::unsolicited::{
