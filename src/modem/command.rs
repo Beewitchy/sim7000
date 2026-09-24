@@ -188,19 +188,20 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     {
         let start_instant = Instant::now();
         let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
+        log::trace!("now {:?}, break timeout {:?}", start_instant, timeout_at);
         loop {
             let (line, read_instant) =
                 match with_deadline(timeout_at, self.modem_reader.read_line()).await {
                     Ok(Ok(read)) => read,
-                    Ok(Err(err)) => return ControlFlow::Break(Err(err)),
-                    Err(TimeoutError) => return ControlFlow::Break(Err(Error::Timeout)),
+                    Ok(Err(err)) => break ControlFlow::Break(Err(err)),
+                    Err(TimeoutError) => break ControlFlow::Break(Err(Error::Timeout)),
                 };
             let read_instant = read_instant.unwrap_or(&start_instant);
             if let Some(matched) = DoneT::match_token(line) {
-                return ControlFlow::Break(Ok(Ok(matched)));
+                break ControlFlow::Break(Ok(Ok(matched)));
             }
             if let Some(matched) = ErrorT::match_token(line) {
-                return ControlFlow::Break(Ok(Err(matched)));
+                break ControlFlow::Break(Ok(Err(matched)));
             }
             match self.unsolicited_parser.parse(line, read_instant).await {
                 Ok(Some(urc)) => match self
@@ -209,7 +210,7 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
                     .await
                 {
                     Ok(()) => {}
-                    Err(err) => return ControlFlow::Break(Err(err)),
+                    Err(err) => break ControlFlow::Break(Err(err)),
                 },
                 Ok(None) => {}
                 Err(err) => {
@@ -237,26 +238,28 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     {
         let start_instant = Instant::now();
         let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
+        log::trace!("response timeout {:?}", timeout_at);
         loop {
             let (line, read_instant) =
                 match with_deadline(timeout_at, self.modem_reader.read_line()).await {
                     Ok(Ok(read)) => read,
-                    Ok(Err(err)) => return ControlFlow::Break(Err(err)),
-                    Err(TimeoutError) => return ControlFlow::Break(Err(Error::Timeout)),
+                    Ok(Err(err)) => break ControlFlow::Break(Err(err)),
+                    Err(TimeoutError) => break ControlFlow::Break(Err(Error::Timeout)),
                 };
+            log::trace!("read line {:?}", line);
             let read_instant = read_instant.unwrap_or(&start_instant);
             if let Some(matched) = DoneT::match_token(line) {
-                return ControlFlow::Break(Ok(Ok(matched)));
+                break ControlFlow::Break(Ok(Ok(matched)));
             }
             if let Some(matched) = ErrorT::match_token(line) {
-                return ControlFlow::Break(Ok(Err(matched)));
+                break ControlFlow::Break(Ok(Err(matched)));
             }
             match ResponseT::from_line(line, read_instant) {
-                Ok(response) => return ControlFlow::Continue(response),
+                Ok(response) => break ControlFlow::Continue(response),
                 Err(AtParseErr::Mismatch) => {}
                 Err(_err) => {
                     log::info!("Failed to parse response, {:?}", _err);
-                    return ControlFlow::Break(Err(Error::UnknownResponse));
+                    break ControlFlow::Break(Err(Error::UnknownResponse));
                 }
             }
             match self.unsolicited_parser.parse(line, read_instant).await {
@@ -266,7 +269,7 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
                     .await
                 {
                     Ok(()) => {}
-                    Err(err) => return ControlFlow::Break(Err(err)),
+                    Err(err) => break ControlFlow::Break(Err(err)),
                 },
                 Ok(None) => {}
                 Err(err) => {
@@ -327,7 +330,7 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
         log::debug!("Running AT command: {:?}", command);
         let timeout = self.send_request(&command).await?;
         log::trace!("Waiting for response for AT command: {:?}", command);
-        let result = run::<ResultParser, _, _, _>(self, timeout).await;
+        let result = expect_result::<ResultParser, _, _, _>(self, timeout).await;
         log::trace!("Completed AT command: {:?}", command);
 
         if let Err(e) = &result {
@@ -367,7 +370,7 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     }
 }
 
-async fn run<
+async fn expect_result<
     'runner,
     P: ParseResult<Output = T, Error = E>,
     UnsolicitedParser: unsolicited::Parser,
@@ -380,6 +383,9 @@ async fn run<
 where
     P::Response: ExpectResponse<P>,
 {
+    let mut timeout = timeout;
+    let at = timeout.arm(&AT_DEFAULT_TIMEOUT, Instant::now());
+    log::trace!("timeout {:?}", at);
     let mut response = match P::Response::expect(runner, timeout).await {
         ControlFlow::Continue(response) => response,
         ControlFlow::Break(Ok(Ok(_))) => {
@@ -397,7 +403,9 @@ where
     };
     loop {
         match response.expect_more(runner, timeout).await {
-            ControlFlow::Continue(()) => {}
+            ControlFlow::Continue(()) => {
+                log::trace!("got more...");
+            }
             ControlFlow::Break(Ok(Ok((done_token, line)))) => {
                 match P::compose_result(response, done_token, line) {
                     Err((_response, _err)) => {

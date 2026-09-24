@@ -39,6 +39,8 @@ impl<'r> ModemReader<'r> {
     }
 
     fn update_read_timestamp(&mut self) {
+        #[cfg(feature = "__trace_io")]
+        log::trace!("update_read_timestamp");
         loop {
             match &self.next_timestamp {
                 Some(ReadTimestamp {
@@ -71,7 +73,8 @@ impl<'r> ModemReader<'r> {
     }
 
     fn consume_line(&mut self, line_len: usize) {
-        log::trace!("consume_line {:?}", line_len);
+        #[cfg(feature = "__trace_io")]
+        log::trace!("CONSUMED LEN {:?}", line_len);
         self.rx.consume(line_len);
         self.total_consumed += line_len;
     }
@@ -85,16 +88,19 @@ impl<'r> ModemReader<'r> {
         const LINE_END: &str = "\n";
         loop {
             self.update_read_timestamp();
+            #[cfg(feature = "__trace_io")]
+            log::trace!("FILLING RX");
             let buffer = self.rx.fill_buf().await;
+            #[cfg(feature = "__trace_io")]
+            log::trace!("RX FILLED");
             let line_timestamp = self.line_timestamp.as_ref();
             #[cfg(feature = "__trace_io")]
             if !buffer.is_empty() {
-                match from_utf8(&buffer) {
+                match from_utf8(buffer) {
                     Ok(line) => log::trace!("CURRENT BUFFER (utf-8) {:?}", line),
-                    Err(_) => log::trace!("CURRENT BUFFER (binary) {:?}", buffer.as_slice()),
+                    Err(_) => log::trace!("CURRENT BUFFER (binary) {:?}", buffer),
                 }
             }
-
             if buffer.starts_with(MODEM_INPUT_PROMPT.as_bytes()) {
                 // When the modem outputs a "> " without a CRLF, it's expecting input,
                 // since there is no CRLF we handle this as a special case.
@@ -111,6 +117,8 @@ impl<'r> ModemReader<'r> {
 
                 let line_len = position + LINE_END.len();
                 let Ok(line) = from_utf8(&buffer[..position]) else {
+                    #[cfg(feature = "__trace_io")]
+                    log::trace!("INVALID UTF8");
                     self.consume_line(line_len);
                     return Err(Error::InvalidUtf8);
                 };
@@ -118,6 +126,10 @@ impl<'r> ModemReader<'r> {
 
                 // Ignore empty lines, as well as echoed lines (which end with \r\r\n)
                 if line.trim().is_empty() || line.ends_with("\r\r") {
+                    #[cfg(feature = "__trace_io")]
+                    log::trace!("IS EMPTY/ECHO");
+                    // todo: ellie (24.09.2026) - Figure out why this deadlocks if there is no yield here
+                    embassy_time::Timer::after_millis(100).await;
                     self.consume_line(line_len);
                     continue;
                 }

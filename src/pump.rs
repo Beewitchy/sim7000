@@ -113,6 +113,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                         tx_buf.len()
                     };
                     self.tx.consume(amt_read);
+                    log::trace!("Tx wrote {:?}", amt_read);
                 }
             },
             self.active_signal.wait_for(PowerState::Off),
@@ -121,13 +122,16 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
         {
             Either4::First(_) => {
                 // Config updated, cycle this task
+                log::debug!("IO config updated, task cycling...");
                 writer.flush().await.map_err(|_| Error::Serial)?;
             }
             Either4::Second(result) => {
+                log::trace!("Rx error, task cycling...");
                 writer.flush().await.map_err(|_| Error::Serial)?;
                 result?;
             }
             Either4::Third(result) => {
+                log::trace!("Tx error, task cycling...");
                 result?;
             }
             Either4::Fourth(()) => {
