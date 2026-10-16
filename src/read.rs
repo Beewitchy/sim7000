@@ -39,34 +39,54 @@ impl<'r> ModemReader<'r> {
     }
 
     fn update_read_timestamp(&mut self) {
-        #[cfg(feature = "__trace_io")]
-        log::trace!("update_read_timestamp");
+        self.next_timestamp = Self::find_next_timestamp(self.next_timestamp, self.total_consumed, &self.rx_timestamps);
+        Self::line_timestamp(self.line_timestamp, &self.next_timestamp, self.total_consumed);
+    }
+
+    fn line_timestamp(line_timestamp: Option<Instant>, next_timestamp: &Option<ReadTimestamp>, total_consumed: usize) -> Option<Instant> {
+        match next_timestamp {
+            Some(ReadTimestamp {
+                total_read,
+                timestamp,
+            }) => {
+                if *total_read <= total_consumed {
+                    Some(*timestamp)
+                } else {
+                    line_timestamp
+                }
+            }
+            None => {line_timestamp}
+        }
+    }
+
+    fn find_next_timestamp(next_timestamp: Option<ReadTimestamp>, total_consumed: usize, rx_timestamps: &DynamicReceiver<'_, ReadTimestamp>) -> Option<ReadTimestamp> {
+        let mut next_timestamp = next_timestamp;
         loop {
-            match &self.next_timestamp {
+            match &next_timestamp {
                 Some(ReadTimestamp {
                     total_read,
                     timestamp,
                 }) => {
-                    if *total_read <= self.total_consumed {
-                        self.line_timestamp = Some(*timestamp)
+                    if *total_read <= total_consumed {
+                        break next_timestamp;
                     } else {
-                        break;
+                        break next_timestamp;
                     }
                 }
                 None => {}
             }
-            match self.rx_timestamps.try_receive() {
+            match rx_timestamps.try_receive() {
                 Ok(ReadTimestamp {
                     total_read,
                     timestamp,
                 }) => {
-                    self.next_timestamp = Some(ReadTimestamp {
+                    next_timestamp = Some(ReadTimestamp {
                         total_read,
                         timestamp,
                     });
                 }
                 Err(embassy_sync::channel::TryReceiveError::Empty) => {
-                    break;
+                    break next_timestamp;
                 }
             }
         }
@@ -84,15 +104,16 @@ impl<'r> ModemReader<'r> {
             // Remove the previously read line from the buffer
             self.consume_line(line_len);
         }
+        self.update_read_timestamp();
+        let mut next_timestamp = self.next_timestamp;
+        let rx_timestamps = self.rx_timestamps;
         const MODEM_INPUT_PROMPT: &str = "> ";
         const LINE_END: &str = "\n";
         loop {
-            self.update_read_timestamp();
-            #[cfg(feature = "__trace_io")]
-            log::trace!("FILLING RX");
+            let total_consumed = self.total_consumed;
             let buffer = self.rx.fill_buf().await;
-            #[cfg(feature = "__trace_io")]
-            log::trace!("RX FILLED");
+            next_timestamp = Self::find_next_timestamp(next_timestamp, total_consumed, &rx_timestamps);
+            self.line_timestamp = Self::line_timestamp(self.line_timestamp, &next_timestamp, total_consumed);
             let line_timestamp = self.line_timestamp.as_ref();
             #[cfg(feature = "__trace_io")]
             if !buffer.is_empty() {
@@ -128,8 +149,6 @@ impl<'r> ModemReader<'r> {
                 if line.trim().is_empty() || line.ends_with("\r\r") {
                     #[cfg(feature = "__trace_io")]
                     log::trace!("IS EMPTY/ECHO");
-                    // todo: ellie (24.09.2026) - Figure out why this deadlocks if there is no yield here
-                    embassy_time::Timer::after_millis(100).await;
                     self.consume_line(line_len);
                     continue;
                 }
@@ -139,6 +158,8 @@ impl<'r> ModemReader<'r> {
                 let line = line.trim(); // The modem likes to be inconsistent with white space
 
                 return Ok((line, line_timestamp));
+            } else {
+                next_timestamp = Some(rx_timestamps.receive().await);
             }
         }
     }

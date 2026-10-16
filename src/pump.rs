@@ -82,7 +82,6 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                         Err(_) => break Err(Error::Serial),
                     };
                     let timestamp = Instant::now();
-                    log::trace!("Rx {:?}", &rx_buf[..bytes]);
                     // todo: ellie (25.08.2026) - Add a expect_timestamps flag on this pump that readers can set, then only send here if the flag is set
                     match self.read_timestamps.try_send(ReadTimestamp {
                         total_read: self.total_read,
@@ -105,7 +104,6 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                 loop {
                     let amt_read = {
                         let tx_buf = self.tx.fill_buf().await;
-                        log::trace!("Tx {:?}", tx_buf);
                         match writer.write_all(tx_buf).await {
                             Ok(()) => {}
                             Err(_) => break Err(Error::Serial),
@@ -113,7 +111,6 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                         tx_buf.len()
                     };
                     self.tx.consume(amt_read);
-                    log::trace!("Tx wrote {:?}", amt_read);
                 }
             },
             self.active_signal.wait_for(PowerState::Off),
@@ -154,7 +151,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize> Pump
     type Err = Error;
 
     async fn pump(&mut self) -> Result<(), Self::Err> {
-        log::trace!("{:?}", self.power_state);
+        log::trace!("IO Pump entering state: {:?}", self.power_state);
         if self.power_state != PowerState::Off {
             self.high_power_pump().await?;
         } else {

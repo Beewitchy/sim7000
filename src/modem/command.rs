@@ -188,7 +188,6 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     {
         let start_instant = Instant::now();
         let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
-        log::trace!("now {:?}, break timeout {:?}", start_instant, timeout_at);
         loop {
             let (line, read_instant) =
                 match with_deadline(timeout_at, self.modem_reader.read_line()).await {
@@ -238,7 +237,6 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
     {
         let start_instant = Instant::now();
         let timeout_at = timeout.into_timeout(&AT_DEFAULT_TIMEOUT, start_instant);
-        log::trace!("response timeout {:?}", timeout_at);
         loop {
             let (line, read_instant) =
                 match with_deadline(timeout_at, self.modem_reader.read_line()).await {
@@ -246,7 +244,6 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
                     Ok(Err(err)) => break ControlFlow::Break(Err(err)),
                     Err(TimeoutError) => break ControlFlow::Break(Err(Error::Timeout)),
                 };
-            log::trace!("read line {:?}", line);
             let read_instant = read_instant.unwrap_or(&start_instant);
             if let Some(matched) = DoneT::match_token(line) {
                 break ControlFlow::Break(Ok(Ok(matched)));
@@ -290,7 +287,7 @@ impl<'r, UnsolicitedParser: unsolicited::Parser> CommandRunner<'r, UnsolicitedPa
         {
             Ok(Ok(read)) => read,
             Ok(Err(err)) => return Err(err),
-            Err(TimeoutError) => return Err(Error::Timeout),
+            Err(TimeoutError) => return Ok(()),
         };
         let read_instant = read_instant.unwrap_or(&start_instant);
         match self.unsolicited_parser.parse(line, read_instant).await {
@@ -385,7 +382,6 @@ where
 {
     let mut timeout = timeout;
     let at = timeout.arm(&AT_DEFAULT_TIMEOUT, Instant::now());
-    log::trace!("timeout {:?}", at);
     let mut response = match P::Response::expect(runner, timeout).await {
         ControlFlow::Continue(response) => response,
         ControlFlow::Break(Ok(Ok(_))) => {
@@ -404,7 +400,6 @@ where
     loop {
         match response.expect_more(runner, timeout).await {
             ControlFlow::Continue(()) => {
-                log::trace!("got more...");
             }
             ControlFlow::Break(Ok(Ok((done_token, line)))) => {
                 match P::compose_result(response, done_token, line) {
@@ -622,50 +617,3 @@ where
         }
     }
 }
-
-// impl<T: AtParseLine, E: AtParseLine, M: RawMutex> ExpectResponse<M> for Result<T,
-// E> {     async fn expect<M: RawMutex>(runner: &mut CommandRunner<'_, P>, timeout:
-// Timeout) -> Result<Self, Error> {         match runner.expect_either_response::<T,
-// E>(timeout).await {             Ok(embassy_futures::select::Either::First(item))
-// => Ok(Ok(item.clone())),
-// Ok(embassy_futures::select::Either::Second(item)) => Ok(Err(item.clone())),
-//             Err(err) => Err(err),
-//         }
-//     }
-// }
-
-// impl<T1: AtParseLine, T2: AtParseLine, P: ParseResult> ExpectResponse<P> for
-// Either<T1, T2> {     type Output = Self;
-//     async fn expect<Up: unsolicited::Parser>(
-//         runner: &mut CommandRunner<'_, Up>,
-//         timeout: Timeout,
-//     ) -> Result<Self::Output, Error> {
-//         match runner.expect_either_response::<P::Done, P::Error, _, _, T1,
-// T2>(timeout).await {             ControlFlow::Continue(Either::T1(item)) =>
-// Ok(Either::T1(item)),             ControlFlow::Continue(Either::T2(item)) =>
-// Ok(Either::T2(item)),             ControlFlow::Break(Ok(Ok((token, line)))) => {
-//                 Ok(Ok(P::compose_result()))
-//             }
-//             ControlFlow::Break(Ok(Err((token, line)))) => {
-//                 Ok(Err(P::parse_err(token, line)))
-//             }
-//             ControlFlow::Break(Err(err)) => Err(err),
-//         }
-//     }
-// }
-
-// impl<Parsed: AtParseLine, Output: TryFrom<Parsed>, P: ParseResult>
-// ExpectResponse<P>     for MetaResponse<Parsed, Output>
-// {
-//     type Output = Output;
-//     async fn expect<Up: unsolicited::Parser>(
-//         runner: &mut CommandRunner<'_, Up>,
-//         timeout: Timeout,
-//     ) -> Result<Self::Output, Error> {
-//         let o = <Parsed as ExpectResponse<P>>::expect(runner, timeout)
-//             .await?
-//             .try_into()
-//             .map_err(|_| Error::IncompatibleMapping)?;
-//         Ok(o)
-//     }
-// }
