@@ -95,6 +95,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                             }
                         }
                     }
+                    // log::trace!("-> {:?}", &rx_buf[..bytes]);
                     self.total_read += bytes;
                     self.rx.write_all(&rx_buf[..bytes]).await;
                 }
@@ -104,6 +105,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                 loop {
                     let amt_read = {
                         let tx_buf = self.tx.fill_buf().await;
+                        // log::trace!("<- {:?}", tx_buf);
                         match writer.write_all(tx_buf).await {
                             Ok(()) => {}
                             Err(_) => break Err(Error::Serial),

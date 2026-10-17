@@ -381,7 +381,7 @@ where
     P::Response: ExpectResponse<P>,
 {
     let mut timeout = timeout;
-    let at = timeout.arm(&AT_DEFAULT_TIMEOUT, Instant::now());
+    timeout.arm(&AT_DEFAULT_TIMEOUT, Instant::now());
     let mut response = match P::Response::expect(runner, timeout).await {
         ControlFlow::Continue(response) => response,
         ControlFlow::Break(Ok(Ok(_))) => {

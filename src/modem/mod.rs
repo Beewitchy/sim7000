@@ -8,8 +8,8 @@ use crate::{
     PowerState,
     at_command::{
         AtRequest, CharacterSet, NetworkMode, ParseResult, SelectMessageService, Seq,
-        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SimError, SmsMessageFormat, ate,
-        atz, cbatchk, ccid, cclk,
+        SetSmsMessageFormat, SetTeCharacterSet, ShowSystemMode, SimError, SmsMessageFormat, at,
+        ate, atz, cbatchk, ccid, cclk,
         cedrxs::{self, AcTType, EDRXSetting, EdrxCycleLength},
         cereg, cfgri, cfun, cgact, cgmr, cgnapn, cgnscold, cgnscpy,
         cgnsmod::{self, WorkMode},
@@ -248,29 +248,27 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             // RDY isn't sent in auto-baud mode, and if the modem
             // is on default settings it may be in that mode. Try
             // setting a fixed baud rate before retrying:
-            let baud_rate = self.max_baud_rate.min(BaudRate::Hz115200);
-            match self
-                .commands
-                .lock()
-                .await
-                .run(ipr::SetBaudRate(baud_rate))
-                .await
-            {
-                Ok(Ok(())) => {
-                    self.context.io_config.sender().send(BuildIoConfig {
-                        baud_rate,
-                        flow_control: EndpointFlowControl::None,
-                    });
-                    return Ok(());
+            const AUTO_BAUD_RATES: [BaudRate; 5] = [
+                BaudRate::Hz9600,
+                BaudRate::Hz19200,
+                BaudRate::Hz38400,
+                BaudRate::Hz57600,
+                BaudRate::Hz115200,
+            ];
+            log::debug!("Attempting to determine modem baud rate.");
+            for baud_rate in AUTO_BAUD_RATES {
+                log::trace!("Trying modem baud rate: {:?}...", baud_rate);
+                self.context.io_config.sender().send(BuildIoConfig {
+                    baud_rate,
+                    flow_control: EndpointFlowControl::None,
+                });
+                match self.commands.lock().await.run(at::At).await {
+                    Ok(Ok(())) => {
+                        log::info!("Initial modem baud rate is: {:?}...", baud_rate);
+                        return Ok(());
+                    }
+                    Ok(Err(_)) | Err(_) => {}
                 }
-                Ok(Err(_err)) => {}
-                Err(Error::Timeout) => {
-                    self.context.io_config.sender().send(BuildIoConfig {
-                        baud_rate,
-                        flow_control: EndpointFlowControl::None,
-                    });
-                }
-                Err(_) => {}
             }
             // Only power down every other attempt
             if attempt % 2 != 0 {
@@ -319,7 +317,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             .run(cmee::ConfigureCMEErrors(CMEErrorMode::Numeric))
             .await??;
 
-        match config.network_mode {
+        let functionality = match config.network_mode {
             NetworkModeConfig::Automatic {
                 priority,
                 timeout,
@@ -331,6 +329,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 self.automatic_registration = true;
                 self.auto_reg_timeout = timeout;
                 self.reg_retries = reg_retries;
+                true
             }
             NetworkModeConfig::Manual {
                 network_mode,
@@ -338,8 +337,10 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
             } => {
                 commands.run(cnmp::SetNetworkMode(network_mode)).await??;
                 commands.run(cmnb::SetNbMode(nb_mode)).await??;
+                true
             }
-        }
+            NetworkModeConfig::Disabled => false,
+        };
 
         // todo: ellie (16.05.2026) - add Ri interrupt pin & bat check configuration
         commands
@@ -362,12 +363,14 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         //     )?;
         // }
 
-        let _ = commands
-            .run(cfun::SetFunctionality(
-                cfun::Functionality::Full,
-                Some(cfun::SetFunctionalityOption::Reset),
-            ))
-            .await?;
+        if functionality {
+            let _ = commands
+                .run(cfun::SetFunctionality(
+                    cfun::Functionality::Full,
+                    Some(cfun::SetFunctionalityOption::Reset),
+                ))
+                .await?;
+        }
 
         drop(commands);
 
@@ -1614,6 +1617,8 @@ pub enum NetworkModeConfig {
         network_mode: NetworkMode,
         nb_mode: NbMode,
     },
+    /// Don't auto-init
+    Disabled,
 }
 
 /// Configuration of Extended Discontinuous Reception mode
