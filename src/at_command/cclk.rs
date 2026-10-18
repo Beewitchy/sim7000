@@ -462,55 +462,80 @@ pub fn parse_psuttz_time(
         //year, month, day, hour, min, sec, "time_zone", dst
         use chrono::format::{Item, Numeric, Pad};
         let mut parsed = Default::default();
-        let remainder = if !s.contains("/") {
-            chrono::format::parse_and_remainder(
-                &mut parsed,
-                s,
-                [
-                    Item::Numeric(Numeric::Year, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Month, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Day, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Hour, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Minute, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Second, Pad::None),
-                ]
-                .into_iter(),
-            )
-            .map_err(map_chrono_err)?
-        } else {
-            // Psuttz on my modem seems to output with this format.
-            // It also and includes a weird extra " character at the end
-            // of the time argument, but that doesn't affect this parsing
-            chrono::format::parse_and_remainder(
-                &mut parsed,
-                s,
-                [
-                    Item::Numeric(Numeric::Year, Pad::None),
-                    Item::Literal("/"),
-                    Item::Numeric(Numeric::Month, Pad::None),
-                    Item::Literal("/"),
-                    Item::Numeric(Numeric::Day, Pad::None),
-                    Item::Literal(","),
-                    Item::Space(" "),
-                    Item::Numeric(Numeric::Hour, Pad::None),
-                    Item::Literal(":"),
-                    Item::Numeric(Numeric::Minute, Pad::None),
-                    Item::Literal(":"),
-                    Item::Numeric(Numeric::Second, Pad::None),
-                ]
-                .into_iter(),
-            )
-            .map_err(map_chrono_err)?
+        let remainder = match s.find("/") {
+            None => {
+                chrono::format::parse_and_remainder(
+                    &mut parsed,
+                    s,
+                    [
+                        Item::Numeric(Numeric::Year, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Month, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Day, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Hour, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Minute, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Second, Pad::None),
+                    ]
+                    .into_iter(),
+                )
+                .map_err(map_chrono_err)?
+            }
+            Some(2) => {
+                // Psuttz on my modem seems to output with this format.
+                // It also and includes a weird extra " character at the end
+                // of the time argument, but that doesn't affect this parsing
+                chrono::format::parse_and_remainder(
+                    &mut parsed,
+                    s,
+                    [
+                        Item::Numeric(Numeric::YearMod100, Pad::None),
+                        Item::Literal("/"),
+                        Item::Numeric(Numeric::Month, Pad::None),
+                        Item::Literal("/"),
+                        Item::Numeric(Numeric::Day, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Hour, Pad::None),
+                        Item::Literal(":"),
+                        Item::Numeric(Numeric::Minute, Pad::None),
+                        Item::Literal(":"),
+                        Item::Numeric(Numeric::Second, Pad::None),
+                    ]
+                    .into_iter(),
+                )
+                .map_err(map_chrono_err)?
+            }
+            Some(_) => {
+                chrono::format::parse_and_remainder(
+                    &mut parsed,
+                    s,
+                    [
+                        Item::Numeric(Numeric::Year, Pad::None),
+                        Item::Literal("/"),
+                        Item::Numeric(Numeric::Month, Pad::None),
+                        Item::Literal("/"),
+                        Item::Numeric(Numeric::Day, Pad::None),
+                        Item::Literal(","),
+                        Item::Space(" "),
+                        Item::Numeric(Numeric::Hour, Pad::None),
+                        Item::Literal(":"),
+                        Item::Numeric(Numeric::Minute, Pad::None),
+                        Item::Literal(":"),
+                        Item::Numeric(Numeric::Second, Pad::None),
+                    ]
+                    .into_iter(),
+                )
+                .map_err(map_chrono_err)?
+            }
         };
         let _ = parsed.set_offset(0).map_err(map_chrono_err)?; // PSUTTZ times are utc
         let dt = parsed
