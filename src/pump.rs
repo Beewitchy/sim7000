@@ -90,7 +90,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                             }
                         }
                     }
-                    log::trace!("-> {:?}", &rx_buf[..bytes]);
+                    // log::trace!("-> {:?}", &rx_buf[..bytes]);
                     self.total_read += bytes;
                     self.rx.write_all(&rx_buf[..bytes]).await;
                 }
