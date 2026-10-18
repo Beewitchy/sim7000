@@ -8,7 +8,7 @@ description = "Drivers for the SIM7000 series of chips"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/Beewitchy/sim7000"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 
 [dependencies]
 chrono = { version = "0.4", optional = true, default-features = false }

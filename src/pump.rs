@@ -1,12 +1,6 @@
 use core::future::Future;
 use embassy_futures::select::{Either4, select4};
-use embassy_sync::{
-    blocking_mutex::raw::RawMutex,
-    channel::Sender,
-    pipe::{Reader, Writer},
-    signal::Signal,
-    watch,
-};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Sender, signal::Signal, watch};
 use embassy_time::Instant;
 use embedded_io_async::{Read, Write};
 
@@ -15,6 +9,7 @@ use crate::{
     at_command::unsolicited::{NetworkRegistration, RegistrationStatus},
     log,
     modem::power::PowerSignalListener,
+    pipe::{Reader, Writer},
     read::ReadTimestamp,
 };
 
@@ -69,11 +64,11 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
             }
         };
         let (mut reader, mut writer) = RW::IO::split(&mut io);
-        let mut slow_pump_warned = false;
         match select4(
             self.io_config.changed(),
             async {
                 log::trace!("Begin Rx");
+                let mut slow_pump_warned = false;
                 loop {
                     let mut rx_buf = [0u8; BUF];
                     let bytes = match reader.read(&mut rx_buf).await {
@@ -95,7 +90,7 @@ impl<'context, RW: 'context + BuildIo, M: RawMutex, const BUF: usize>
                             }
                         }
                     }
-                    // log::trace!("-> {:?}", &rx_buf[..bytes]);
+                    log::trace!("-> {:?}", &rx_buf[..bytes]);
                     self.total_read += bytes;
                     self.rx.write_all(&rx_buf[..bytes]).await;
                 }

@@ -1,6 +1,4 @@
-use embassy_sync::{
-    blocking_mutex::raw::RawMutex, channel::Channel, pipe::Pipe, signal::Signal, watch::Watch,
-};
+use embassy_sync::{blocking_mutex::raw::RawMutex, channel::Channel, signal::Signal, watch::Watch};
 
 use super::{ReadyState, SmsState, power::PowerSignal};
 use crate::{
@@ -10,6 +8,7 @@ use crate::{
         RegistrationStatus, VoltageWarning,
     },
     drop::DropChannel,
+    pipe::Pipe,
     read::ReadTimestamp,
     slot::Slot,
     tcp::TCP_RX_BUF_LEN,

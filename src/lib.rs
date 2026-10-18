@@ -17,6 +17,8 @@ pub mod slot;
 pub mod tcp;
 mod util;
 pub mod voltage;
+mod pipe;
+mod ring_buffer;
 
 pub use util::*;
 

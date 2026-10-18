@@ -1,8 +1,5 @@
 use core::{fmt::Write, future::Future, ops::ControlFlow};
-use embassy_sync::{
-    channel::DynamicReceiver,
-    pipe::{DynamicReader, DynamicWriter},
-};
+use embassy_sync::channel::DynamicReceiver;
 use embassy_time::{Duration, Instant, TimeoutError, with_deadline};
 use heapless::Vec;
 
@@ -14,6 +11,7 @@ use crate::{
     },
     log,
     modem::unsolicited,
+    pipe::{DynamicReader, DynamicWriter},
     read::{ModemReader, ReadTimestamp},
 };
 
@@ -399,8 +397,7 @@ where
     };
     loop {
         match response.expect_more(runner, timeout).await {
-            ControlFlow::Continue(()) => {
-            }
+            ControlFlow::Continue(()) => {}
             ControlFlow::Break(Ok(Ok((done_token, line)))) => {
                 match P::compose_result(response, done_token, line) {
                     Err((_response, _err)) => {
