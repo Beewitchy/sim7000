@@ -1,7 +1,6 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use futures::{FutureExt, select_biased};
 
 use crate::at_command::{cgnsinf, unsolicited};
 use crate::drop::{AsyncDrop, DropChannel, DropMessage};
@@ -57,13 +56,17 @@ where
     /// Wait until the next GNSS report.
     pub async fn wait_for_report(&mut self) -> Result<unsolicited::GnssReport, Closed> {
         let reports = self.unsolicited_reports.ok_or(Closed)?;
-        select_biased! {
-            report = reports.wait().fuse() => Ok(report),
-            _ = self.power_signal.wait_for(PowerState::Off).fuse() => {
+        match embassy_futures::select::select3(
+            reports.wait(),
+            self.power_signal.wait_for(PowerState::Off),
+            Timer::after(self.timeout),
+        ).await {
+            embassy_futures::select::Either3::First(report) => Ok(report),
+            embassy_futures::select::Either3::Second(()) => {
                 self.unsolicited_reports = None;
                 Err(Closed)
             }
-            _ = Timer::after(self.timeout).fuse() => {
+            embassy_futures::select::Either3::Third(()) => {
                 log::warn!("Gnss timed out");
                 self.unsolicited_reports = None;
                 Err(Closed)

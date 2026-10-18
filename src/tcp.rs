@@ -5,7 +5,6 @@ use embassy_time::{Duration, TimeoutError, Timer, with_timeout};
 use embedded_io_async::{
     ErrorType, {Read, Write},
 };
-use futures::{FutureExt, select_biased};
 
 use crate::{
     Error,
@@ -155,7 +154,8 @@ where
                 #[allow(clippy::unnecessary_fallible_conversions)] // heapless string panics on from
                 destination: host.try_into().map_err(|_| Error::BufferOverflow)?,
             })
-            .await?.map_err(Error::Sim)?;
+            .await?
+            .map_err(Error::Sim)?;
 
         // Wait for a response.
         // Based on testing, a connection will timeout after ~120 seconds, so we add our own
@@ -164,7 +164,12 @@ where
             match with_timeout(Duration::from_secs(6), token.next_message()).await {
                 Err(TimeoutError) => {
                     // Make sure the modem is still responding to commands.
-                    commands.lock().await.run(at::At).await?.map_err(Error::Sim)?;
+                    commands
+                        .lock()
+                        .await
+                        .run(at::At)
+                        .await?
+                        .map_err(Error::Sim)?;
                 }
                 Ok(Err(Lagged)) => {
                     log::error!(
@@ -296,24 +301,30 @@ impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Write
             commands.send_bytes(chunk).await;
 
             use ConnectionMessage::*;
-            select_biased! {
-                _ = stream.handle_events().fuse() => unreachable!(),
-                event = events.next_message_pure().fuse() => match event {
-                    SendSuccess => {},
+            match embassy_futures::select::select3(
+                stream.handle_events(),
+                events.next_message_pure(),
+                Timer::after(self.stream.timeout),
+            )
+            .await
+            {
+                embassy_futures::select::Either3::Second(event) => match event {
+                    SendSuccess => {}
                     SendFail => return Err(TcpError::SendFail),
                     Closed => {
                         stream.closed.store(true, Ordering::Release);
                         return Err(TcpError::Closed);
                     }
                     Connected | AlreadyConnected | ConnectionFailed => {
-                        log::warn!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
+                        log::warn!(
+                            "TcpStream received an unexpected ConnectionMessage: {:?}",
+                            event
+                        );
                         stream.closed.store(true, Ordering::Release);
                         return Err(TcpError::Closed);
                     }
                 },
-                _ = Timer::after(self.stream.timeout).fuse() => {
-                    return Err(TcpError::Timeout);
-                }
+                embassy_futures::select::Either3::Third(()) => return Err(TcpError::Timeout),
             }
         }
 
@@ -343,15 +354,21 @@ impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Read
         loop {
             log::trace!("tcp {} awaiting rx/event", stream.token.ordinal());
 
-            select_biased! {
-                _ = stream.handle_events().fuse() => unreachable!(),
-                n = stream.token.rx().read(buf).fuse() => {
+            use ConnectionMessage::*;
+            match embassy_futures::select::select4(
+                stream.handle_events(),
+                stream.token.rx().read(buf),
+                events.next_message_pure(),
+                Timer::after(self.stream.timeout),
+            )
+            .await
+            {
+                embassy_futures::select::Either4::Second(n) => {
                     log::trace!("tcp {} rx got {} bytes", stream.token.ordinal(), n);
                     break Ok(n);
                 }
-                event = events.next_message_pure().fuse() => {
+                embassy_futures::select::Either4::Third(event) => {
                     log::trace!("tcp {} got event {:?}", stream.token.ordinal(), event);
-                    use ConnectionMessage::*;
                     match event {
                         Closed => {
                             stream.closed.store(true, Ordering::Release);
@@ -359,21 +376,24 @@ impl<M: RawMutex, UnsolicitedParser: unsolicited::Parser> Read
                         }
                         SendSuccess | SendFail => {}
                         Connected | AlreadyConnected | ConnectionFailed => {
-                            log::warn!("TcpStream received an unexpected ConnectionMessage: {:?}", event);
+                            log::warn!(
+                                "TcpStream received an unexpected ConnectionMessage: {:?}",
+                                event
+                            );
                             stream.closed.store(true, Ordering::Release);
-                            return Err(TcpError::Closed);
+                            break Err(TcpError::Closed);
                         }
                     }
                 }
-                _ = Timer::after(self.stream.timeout).fuse() => {
+                embassy_futures::select::Either4::Fourth(()) => {
                     let mut commands = self.stream.commands.lock().await;
 
                     // make sure the modem is still alive
                     if commands.run(At).await.is_err() {
-                        return Err(TcpError::Timeout);
+                        break Err(TcpError::Timeout);
                     }
                 }
-            };
+            }
         }
     }
 }

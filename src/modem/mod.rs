@@ -40,7 +40,6 @@ use embassy_sync::{
     blocking_mutex::raw::RawMutex, channel::Receiver, mutex::Mutex, signal::Signal,
 };
 use embassy_time::{Duration, Timer, with_timeout};
-use futures::{FutureExt, select_biased};
 use heapless::{String, Vec};
 use power::PowerSignalBroadcaster;
 
@@ -834,10 +833,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                 wait_for_status.await
             }
         };
-        select_biased! {
-            network_registration = waiter.fuse() => Ok(network_registration),
-            _ = Timer::after(timeout).fuse() => Err(Error::Timeout),
-        }
+        Ok(embassy_time::with_timeout(timeout, waiter).await?)
     }
 
     pub fn network_registration(&self) -> NetworkRegistration {
@@ -859,23 +855,27 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
         let mut active_signal = self.context.active_signal.listener();
         let mut current_power_state = self.power.state();
         while !drop_channel.is_empty() {
-            select_biased! {
-                power_state = active_signal.listen().fuse() => {
-                    current_power_state = power_state;
-                }
-                drop_message = drop_channel.receive().fuse() => {
+            match embassy_futures::select::select(
+                active_signal.listen(),
+                drop_channel.receive(),
+            ).await {
+                embassy_futures::select::Either::First(power_state) => current_power_state = power_state,
+                embassy_futures::select::Either::Second(drop_message) => {
                     if current_power_state == PowerState::On {
                         // run drop command, abort if power state changes
-                        let result = select_biased! {
-                            power_state = active_signal.listen().fuse() => {
-                                current_power_state = power_state;
-                                Ok(())
-                            }
-                            result = async {
+                        let result = match embassy_futures::select::select(
+                            active_signal.listen(),
+                            async {
                                 // run drop command
                                 let mut runner = self.commands.lock().await;
                                 drop_message.run(&mut runner).await
-                            }.fuse() => result,
+                            },
+                         ).await {
+                            embassy_futures::select::Either::First(power_state) => {
+                                current_power_state = power_state;
+                                Ok(())
+                            }
+                            embassy_futures::select::Either::Second(result) => result,
                         };
 
                         // clean up regardless of whether drop command succeeded
@@ -884,7 +884,7 @@ impl<'m, P: ModemPower, M: RawMutex, const TCP_SLOTS: usize, const BUF_LEN: usiz
                     } else {
                         drop_message.clean_up(self.context);
                     }
-                },
+                }
             }
         }
 
