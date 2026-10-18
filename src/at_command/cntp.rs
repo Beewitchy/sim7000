@@ -23,7 +23,7 @@ impl AtRequest for SynchronizeNetworkTime {
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(
             buf,
-            "CNTP=\"{}\",{},{}",
+            "+CNTP=\"{}\",{},{}",
             self.ntp_server.as_str(),
             self.timezone_quarter_hours,
             self.cid
@@ -35,7 +35,7 @@ impl AtRequest for Execute {
     type ResultType = SimResult<(GenericOk, NetworkTime)>;
     const TYPE: RequestType = RequestType::Command(CommandGroup::Extended);
     fn encode(&self, buf: &mut impl core::fmt::Write) -> core::fmt::Result {
-        write!(buf, "CNTP")
+        write!(buf, "+CNTP")
     }
     fn default_timeout() -> Option<embassy_time::Duration> {
         Some(embassy_time::Duration::from_secs(60))

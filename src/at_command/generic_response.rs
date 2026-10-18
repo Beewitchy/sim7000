@@ -126,14 +126,22 @@ impl<R, E: ParseError> ParseResult for Result<GenericOk<R>, E> {
     }
 }
 
-impl<R: MatchToken, E: ParseError> ParseResult for Result<(GenericOk, R), E> {
+impl MatchToken for () {
+    const AUTO_MATCH: Option<Self::Token> = Some(());
+    type Token = ();
+    fn match_token(_: &str) -> Option<(Self::Token, &str)> {
+        None
+    }
+}
+
+impl<R, E: ParseError> ParseResult for Result<(GenericOk, R), E> {
     type Response = (GenericOk, R);
     type Output = R;
-    type Done = R;
+    type Done = ();
     type Error = E;
     fn compose_result(
         (GenericOk(()), response): Self::Response,
-        _: <Self::Done as MatchToken>::Token,
+        (): <Self::Done as MatchToken>::Token,
         _: &str,
     ) -> Result<Self::Output, (Self::Response, AtParseErr)> {
         Ok(response)

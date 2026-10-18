@@ -135,8 +135,8 @@ impl<'r> ModemReader<'r> {
             #[cfg(feature = "__trace_io")]
             if !buffer.is_empty() {
                 match from_utf8(buffer) {
-                    Ok(line) => log::trace!("CURRENT BUFFER (utf-8) {:?}", line),
-                    Err(_) => log::trace!("CURRENT BUFFER (binary) {:?}", buffer),
+                    Ok(line) => log::debug!("CURRENT BUFFER (utf-8) {:?}", line),
+                    Err(_) => log::debug!("CURRENT BUFFER (binary) {:?}", buffer),
                 }
             }
             if buffer.starts_with(MODEM_INPUT_PROMPT.as_bytes()) {

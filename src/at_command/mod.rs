@@ -400,6 +400,7 @@ impl<'r, R> core::ops::DerefMut for TimestampedRef<'r, R> {
 
 /// Defines simple matching logic for extracting a single token out of a str slice.
 pub trait MatchToken<R = Self> {
+    const AUTO_MATCH: Option<Self::Token> = None;
     /// The token type to be extracted
     type Token;
     /// Implements the matching behavior.

@@ -470,9 +470,13 @@ pub trait ExpectResponse<P: ParseResult>: Sized {
         >,
     > {
         async move {
-            runner
-                .expect_break::<P::Done, <P::Error as ParseError>::Matcher, _, _>(timeout)
-                .await
+            if let Some(done_token) = P::Done::AUTO_MATCH {
+                ControlFlow::Break(Ok(Ok((done_token, ""))))
+            } else {
+                runner
+                    .expect_break::<P::Done, <P::Error as ParseError>::Matcher, _, _>(timeout)
+                    .await
+            }
         }
     }
 }
