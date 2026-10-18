@@ -228,12 +228,12 @@ struct PipeState<const N: usize> {
 struct Buffer<const N: usize>(UnsafeCell<[u8; N]>);
 
 impl<const N: usize> Buffer<N> {
-    unsafe fn get<'a>(&self, r: Range<usize>) -> &'a [u8] {
+    const unsafe fn get<'a>(&self, r: Range<usize>) -> &'a [u8] {
         let p = self.0.get() as *const u8;
         core::slice::from_raw_parts(p.add(r.start), r.end - r.start)
     }
 
-    unsafe fn get_mut<'a>(&self, r: Range<usize>) -> &'a mut [u8] {
+    const unsafe fn get_mut<'a>(&self, r: Range<usize>) -> &'a mut [u8] {
         let p = self.0.get() as *mut u8;
         core::slice::from_raw_parts_mut(p.add(r.start), r.end - r.start)
     }
@@ -349,8 +349,8 @@ where
                 let end_range = s.buffer.pop_buf();
                 s.buffer.pop(end_range.end - end_range.start);
                 {
-                    let buffer = unsafe { self.buf.get_mut(0..s.buffer.len()) };
-                    buffer.rotate_left(start_range.start);
+                    let buf = unsafe { self.buf.get_mut(0..N) };
+                    buf.rotate_left(start_range.start);
                 }
                 s.buffer.clear();
                 s.buffer.push((start_range.end - start_range.start) + (end_range.end - end_range.start));
